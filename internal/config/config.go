@@ -15,6 +15,7 @@ type Config struct {
 	HTTPAddress         string
 	DatabaseURL         string
 	PublicURL           string
+	ClientURL           string
 	JWTSecret           []byte
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
@@ -49,6 +50,7 @@ func Load() (Config, error) {
 		HTTPAddress:         env("HTTP_ADDRESS", ":43781"),
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
 		PublicURL:           strings.TrimRight(env("PUBLIC_URL", "http://127.0.0.1:43781"), "/"),
+		ClientURL:           strings.TrimRight(env("CLIENT_URL", "cubetimer://auth"), "/"),
 		JWTSecret:           secret,
 		AccessTokenTTL:      durationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:     durationEnv("REFRESH_TOKEN_TTL", 30*24*time.Hour),

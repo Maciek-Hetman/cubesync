@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error
 	AppendChange(ctx context.Context, arg AppendChangeParams) (int64, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) error

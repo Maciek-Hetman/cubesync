@@ -175,7 +175,10 @@ func (s *Service) Refresh(ctx context.Context, rawToken string) (Session, error)
 	q := storedb.New(tx)
 	record, err := q.GetRefreshTokenForUpdate(ctx, tokenHash(rawToken))
 	if err != nil {
-		return Session{}, invalidRefreshToken()
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Session{}, invalidRefreshToken()
+		}
+		return Session{}, err
 	}
 	now := s.now().UTC()
 	if record.UsedAt != nil || record.RevokedAt != nil {
@@ -387,7 +390,13 @@ func (s *Service) consumeOneTimeToken(
 	record, err := q.GetOneTimeTokenForUpdate(ctx, storedb.GetOneTimeTokenForUpdateParams{
 		TokenHash: tokenHash(rawToken), Kind: kind,
 	})
-	if err != nil || record.UsedAt != nil || !record.ExpiresAt.After(s.now().UTC()) {
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Session{}, authError("invalid_token", "token is invalid or expired")
+		}
+		return Session{}, err
+	}
+	if record.UsedAt != nil || !record.ExpiresAt.After(s.now().UTC()) {
 		return Session{}, authError("invalid_token", "token is invalid or expired")
 	}
 	if err := apply(ctx, q, record); err != nil {
@@ -436,7 +445,7 @@ func (s *Service) issueSessionWithQueries(
 	user User,
 	familyID uuid.UUID,
 ) (Session, error) {
-	access, expiresAt, err := s.tokens.IssueAccessToken(user.ID, user.EmailVerified)
+	access, _, err := s.tokens.IssueAccessToken(user.ID, user.EmailVerified)
 	if err != nil {
 		return Session{}, err
 	}
@@ -452,7 +461,7 @@ func (s *Service) issueSessionWithQueries(
 	}
 	return Session{
 		AccessToken: access, RefreshToken: refresh, TokenType: "Bearer",
-		ExpiresIn: int64(time.Until(expiresAt).Seconds()), User: user,
+		ExpiresIn: int64(s.config.AccessTokenTTL.Seconds()), User: user,
 	}, nil
 }
 

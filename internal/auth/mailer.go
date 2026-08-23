@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/mail"
 	"net/smtp"
 	"net/url"
+	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
 )
@@ -26,12 +30,12 @@ func NewMailer(cfg config.Config, logger *slog.Logger) Mailer {
 }
 
 func (m *SMTPMailer) SendVerification(ctx context.Context, email, token string) error {
-	link := m.config.PublicURL + "/v1/auth/email/verify?token=" + url.QueryEscape(token)
+	link := m.config.ClientURL + "/verify-email?token=" + url.QueryEscape(token)
 	return m.send(ctx, email, "Verify your CubeTimer account", "Open this link to verify your email:\n\n"+link, link)
 }
 
 func (m *SMTPMailer) SendPasswordReset(ctx context.Context, email, token string) error {
-	link := m.config.PublicURL + "/reset-password?token=" + url.QueryEscape(token)
+	link := m.config.ClientURL + "/reset-password?token=" + url.QueryEscape(token)
 	return m.send(ctx, email, "Reset your CubeTimer password", "Open this link to reset your password:\n\n"+link, link)
 }
 
@@ -63,5 +67,45 @@ func (m *SMTPMailer) send(ctx context.Context, recipient, subject, body, link st
 			"Content-Type: text/plain; charset=UTF-8\r\n" +
 			"\r\n" + body + "\r\n",
 	)
-	return smtp.SendMail(m.config.SMTPAddress(), auth, from.Address, []string{recipient}, message)
+	conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", m.config.SMTPAddress())
+	if err != nil {
+		return err
+	}
+	client, err := smtp.NewClient(conn, m.config.SMTPHost)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	defer client.Close()
+	if m.config.SMTPStartTLS {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return errors.New("SMTP server does not advertise STARTTLS")
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: m.config.SMTPHost, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	}
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return err
+		}
+	}
+	if err := client.Mail(from.Address); err != nil {
+		return err
+	}
+	if err := client.Rcpt(recipient); err != nil {
+		return err
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := writer.Write(message); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return client.Quit()
 }

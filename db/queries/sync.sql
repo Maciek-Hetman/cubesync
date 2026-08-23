@@ -1,3 +1,6 @@
+-- name: AcquireAdvisoryLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1, 0));
+
 -- name: UpsertDevice :exec
 INSERT INTO devices (id, user_id, name, platform)
 VALUES ($1, $2, $3, $4)

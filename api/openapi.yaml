@@ -76,15 +76,19 @@ paths:
         "429":
           $ref: "#/components/responses/Error"
   /v1/auth/email/verify:
-    get:
+    post:
       operationId: verifyEmail
       tags: [auth]
-      parameters:
-        - in: query
-          name: token
-          required: true
-          schema:
-            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
       responses:
         "200":
           description: Email verified and session created
@@ -406,6 +410,55 @@ components:
         platform:
           type: string
           maxLength: 40
+    SessionInput:
+      type: object
+      required: [id, name, event, kind, started_at, archived]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        event:
+          $ref: "#/components/schemas/Event"
+        kind:
+          type: string
+          enum: [manual, automatic]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        archived:
+          type: boolean
+    SolveInput:
+      type: object
+      required: [id, duration_ms, penalty, solved_at, scramble, event]
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: [string, "null"]
+          format: uuid
+        duration_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        penalty:
+          type: string
+          enum: [none, plus_two, dnf]
+        solved_at:
+          type: string
+          format: date-time
+        scramble:
+          type: string
+          maxLength: 4096
+        event:
+          $ref: "#/components/schemas/Event"
     Session:
       type: object
       required: [id, name, event, kind, started_at, archived, version, updated_at]
@@ -500,8 +553,8 @@ components:
           minimum: 0
         data:
           oneOf:
-            - $ref: "#/components/schemas/Session"
-            - $ref: "#/components/schemas/Solve"
+            - $ref: "#/components/schemas/SessionInput"
+            - $ref: "#/components/schemas/SolveInput"
     MutationOutcome:
       type: object
       required: [mutation_id, status]

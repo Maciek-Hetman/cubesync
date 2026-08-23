@@ -48,8 +48,13 @@ func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
-	rawToken := r.URL.Query().Get("token")
-	session, err := h.auth.VerifyEmail(r.Context(), rawToken)
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	session, err := h.auth.VerifyEmail(r.Context(), body.Token)
 	if err != nil {
 		h.writeAuthError(w, err)
 		return

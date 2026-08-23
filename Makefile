@@ -13,12 +13,12 @@ test-integration:
 	go test -tags=integration ./...
 
 lint:
-	gofmt -w $$(git ls-files '*.go')
+	test -z "$$(gofmt -l .)"
 	go vet ./...
 
 generate:
-	go run github.com/sqlc-dev/sqlc/cmd/sqlc@latest generate
-	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest --config api/oapi-codegen.yaml api/openapi.yaml
+	go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 --config api/oapi-codegen.yaml api/openapi.yaml
 
 migrate-up:
 	go run ./cmd/api migrate

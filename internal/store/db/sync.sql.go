@@ -13,6 +13,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const acquireAdvisoryLock = `-- name: AcquireAdvisoryLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
+`
+
+func (q *Queries) AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error {
+	_, err := q.db.Exec(ctx, acquireAdvisoryLock, hashtextextended)
+	return err
+}
+
 const appendChange = `-- name: AppendChange :one
 INSERT INTO change_log (
     user_id, entity_type, entity_id, operation, version, payload

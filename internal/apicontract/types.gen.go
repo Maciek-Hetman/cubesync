@@ -159,16 +159,34 @@ func (e MutationOutcomeStatus) Valid() bool {
 
 // Defines values for SessionKind.
 const (
-	Automatic SessionKind = "automatic"
-	Manual    SessionKind = "manual"
+	SessionKindAutomatic SessionKind = "automatic"
+	SessionKindManual    SessionKind = "manual"
 )
 
 // Valid indicates whether the value is a known member of the SessionKind enum.
 func (e SessionKind) Valid() bool {
 	switch e {
-	case Automatic:
+	case SessionKindAutomatic:
 		return true
-	case Manual:
+	case SessionKindManual:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionInputKind.
+const (
+	SessionInputKindAutomatic SessionInputKind = "automatic"
+	SessionInputKindManual    SessionInputKind = "manual"
+)
+
+// Valid indicates whether the value is a known member of the SessionInputKind enum.
+func (e SessionInputKind) Valid() bool {
+	switch e {
+	case SessionInputKindAutomatic:
+		return true
+	case SessionInputKindManual:
 		return true
 	default:
 		return false
@@ -177,19 +195,40 @@ func (e SessionKind) Valid() bool {
 
 // Defines values for SolvePenalty.
 const (
-	Dnf     SolvePenalty = "dnf"
-	None    SolvePenalty = "none"
-	PlusTwo SolvePenalty = "plus_two"
+	SolvePenaltyDnf     SolvePenalty = "dnf"
+	SolvePenaltyNone    SolvePenalty = "none"
+	SolvePenaltyPlusTwo SolvePenalty = "plus_two"
 )
 
 // Valid indicates whether the value is a known member of the SolvePenalty enum.
 func (e SolvePenalty) Valid() bool {
 	switch e {
-	case Dnf:
+	case SolvePenaltyDnf:
 		return true
-	case None:
+	case SolvePenaltyNone:
 		return true
-	case PlusTwo:
+	case SolvePenaltyPlusTwo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SolveInputPenalty.
+const (
+	SolveInputPenaltyDnf     SolveInputPenalty = "dnf"
+	SolveInputPenaltyNone    SolveInputPenalty = "none"
+	SolveInputPenaltyPlusTwo SolveInputPenalty = "plus_two"
+)
+
+// Valid indicates whether the value is a known member of the SolveInputPenalty enum.
+func (e SolveInputPenalty) Valid() bool {
+	switch e {
+	case SolveInputPenaltyDnf:
+		return true
+	case SolveInputPenaltyNone:
+		return true
+	case SolveInputPenaltyPlusTwo:
 		return true
 	default:
 		return false
@@ -391,6 +430,20 @@ type Session struct {
 // SessionKind defines model for Session.Kind.
 type SessionKind string
 
+// SessionInput defines model for SessionInput.
+type SessionInput struct {
+	Archived  bool               `json:"archived"`
+	EndedAt   *time.Time         `json:"ended_at,omitempty"`
+	Event     Event              `json:"event"`
+	Id        openapi_types.UUID `json:"id"`
+	Kind      SessionInputKind   `json:"kind"`
+	Name      string             `json:"name"`
+	StartedAt time.Time          `json:"started_at"`
+}
+
+// SessionInputKind defines model for SessionInput.Kind.
+type SessionInputKind string
+
 // Solve defines model for Solve.
 type Solve struct {
 	DeletedAt  *time.Time          `json:"deleted_at,omitempty"`
@@ -407,6 +460,20 @@ type Solve struct {
 
 // SolvePenalty defines model for Solve.Penalty.
 type SolvePenalty string
+
+// SolveInput defines model for SolveInput.
+type SolveInput struct {
+	DurationMs int64               `json:"duration_ms"`
+	Event      Event               `json:"event"`
+	Id         openapi_types.UUID  `json:"id"`
+	Penalty    SolveInputPenalty   `json:"penalty"`
+	Scramble   string              `json:"scramble"`
+	SessionId  *openapi_types.UUID `json:"session_id,omitempty"`
+	SolvedAt   time.Time           `json:"solved_at"`
+}
+
+// SolveInputPenalty defines model for SolveInput.Penalty.
+type SolveInputPenalty string
 
 // Status defines model for Status.
 type Status struct {
@@ -444,9 +511,9 @@ type ResendVerificationJSONBody struct {
 	Email openapi_types.Email `json:"email"`
 }
 
-// VerifyEmailParams defines parameters for VerifyEmail.
-type VerifyEmailParams struct {
-	Token string `form:"token" json:"token"`
+// VerifyEmailJSONBody defines parameters for VerifyEmail.
+type VerifyEmailJSONBody struct {
+	Token string `json:"token"`
 }
 
 // FederatedLoginParamsProvider defines parameters for FederatedLogin.
@@ -468,6 +535,9 @@ type ResetPasswordJSONBody struct {
 
 // ResendVerificationJSONRequestBody defines body for ResendVerification for application/json ContentType.
 type ResendVerificationJSONRequestBody ResendVerificationJSONBody
+
+// VerifyEmailJSONRequestBody defines body for VerifyEmail for application/json ContentType.
+type VerifyEmailJSONRequestBody VerifyEmailJSONBody
 
 // FederatedLoginJSONRequestBody defines body for FederatedLogin for application/json ContentType.
 type FederatedLoginJSONRequestBody = FederatedInput
@@ -720,22 +790,22 @@ func (t *FederatedInput) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsSession returns the union data inside the Mutation_Data as a Session
-func (t Mutation_Data) AsSession() (Session, error) {
-	var body Session
+// AsSessionInput returns the union data inside the Mutation_Data as a SessionInput
+func (t Mutation_Data) AsSessionInput() (SessionInput, error) {
+	var body SessionInput
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromSession overwrites any union data inside the Mutation_Data as the provided Session
-func (t *Mutation_Data) FromSession(v Session) error {
+// FromSessionInput overwrites any union data inside the Mutation_Data as the provided SessionInput
+func (t *Mutation_Data) FromSessionInput(v SessionInput) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeSession performs a merge with any union data inside the Mutation_Data, using the provided Session
-func (t *Mutation_Data) MergeSession(v Session) error {
+// MergeSessionInput performs a merge with any union data inside the Mutation_Data, using the provided SessionInput
+func (t *Mutation_Data) MergeSessionInput(v SessionInput) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -746,22 +816,22 @@ func (t *Mutation_Data) MergeSession(v Session) error {
 	return err
 }
 
-// AsSolve returns the union data inside the Mutation_Data as a Solve
-func (t Mutation_Data) AsSolve() (Solve, error) {
-	var body Solve
+// AsSolveInput returns the union data inside the Mutation_Data as a SolveInput
+func (t Mutation_Data) AsSolveInput() (SolveInput, error) {
+	var body SolveInput
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromSolve overwrites any union data inside the Mutation_Data as the provided Solve
-func (t *Mutation_Data) FromSolve(v Solve) error {
+// FromSolveInput overwrites any union data inside the Mutation_Data as the provided SolveInput
+func (t *Mutation_Data) FromSolveInput(v SolveInput) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeSolve performs a merge with any union data inside the Mutation_Data, using the provided Solve
-func (t *Mutation_Data) MergeSolve(v Solve) error {
+// MergeSolveInput performs a merge with any union data inside the Mutation_Data, using the provided SolveInput
+func (t *Mutation_Data) MergeSolveInput(v SolveInput) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -849,39 +919,40 @@ func (t *MutationOutcome_Current) UnmarshalJSON(b []byte) error {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"7Fpbb+O4Ff4rAttHbexcZrDrt9l0p02RYoNktn0IDIORji1uJFJDUo7dQP+94E2WZEqWvXYmXYyfbJHi",
+	"uXwfDw/P8SuKWJYzClQKNHlFOeY4Awlc/7rjbEli4Oo7oWiCciwTFCKKM1C/3HCIOHwtCIcYTSQvIEQi",
+	"SiDD6j2gRYYmj2jB2CIFFCKc5ymgaYjkOlerCMkJXaCyLNUyImdUgJb+C+dMi44YlUCl+qpeJhGWhNHR",
+	"74JR9Wwj668c5miC/jLaGDUyo2JkVtNSYhARJ7laBE2MmMBJRmqCfUct+amQyQMIQYysnLMcuCRGQxxF",
+	"IMRMsmfQoy2LQgSrnHAQM6KH54xnWKIJIlR+vEKVBwiVsACOtAPmHETSs6QemZnH2jVCrfgzYK6B2Jpf",
+	"CINfn29+U3OM/x2Mj03j2po19GjYaSVu8GVPv0MklSrXCaYL2HZjpJ/HMywbXoqxhB8kycBnVlRwYdgx",
+	"wKsxlpofjMKvczR57PeGg7sMd8xj6RJQOVU4U0nkuk53YRcJkdDTph4bzFszEjfMKAoS+yxWHsPS8tCJ",
+	"KXIBXCLF6RSkX8wSuKPvTl+1OGC9XBlY17mu0UaIdXZYB9XHhb/BkkQeLgx0holAryjDq1ugC5mgyfnF",
+	"2DMxT7FUq7UmX23PbZmu5WoxtUV8llRhqmkI+B9HLAbvvs5ACLzwjbUxUSts5m+r1JpvFPFqvrRR1bHp",
+	"YnWBQnS5ukQhulopfnxYfdCyFjgjdKVcsebmq49pnyFWjID4huaFidd0bXdc07c2jEzVHvMYxyEmHCI5",
+	"KzhRXGIxzJbAyZyo0FJOw7ZXUwJU2p20HSu6fN5c1zej0tQ3SBmN/As39G/wWduzA+DKGCfCB94/AKeK",
+	"yW2CCYllIXbTyM7zLf2vQlaBprn4ExbaYZ3xJCOUZIpM46PFYcOlQcHYTn2riHzawO2LRzvDcAOgPmx/",
+	"LWTEMtgjQEUF5zZenOwc7Q6CIcqs5kPR2WwE53OV0eQSYh1glEP014jReUoieeyzs65v2Lfd7rAQL4zH",
+	"1xxihStOhec4yTBJG2qYJ74jz663dT7+qPdn9XvnEegkVAv6tL83eeEXFyWbau/KZ1sSm9N94rpzcR4l",
+	"ZAn1E+CJsRQw1ZFH77IBKeajUy1EtEhTZGJJfPCr7ojtvZroScMDyjOhcZ3XGaYFVkDhQrIMSxJ5uTw4",
+	"ZxISc7lnPl7kani/dw49SHoyNeNv66KGJeGGIfVstaZ3D92qfGYfzn2nzS4K/FEgvYjp02QLqj8UAOLC",
+	"HLCzTPjJileGrD9+vBqrz65E6CT45kBx2sx5KKPm/lKImXxhKt2gcy/KIuI4e0ph657000ffbLMteo9i",
+	"nyN15vX/FVjq2G98XDel5rwNb4dHmE3iuk3a77z7Rrw7GhO8kFeZ6dGvbg9rGt3D1wKEh049NbMd97aq",
+	"WNPHG1vSKUOUkoxIi6hZ9rxJznOfFJcwmzqQBEP6PonVRbXUe+HGvPNhvDECc47X3WUta1hddrdXbYG4",
+	"o3w5XGtbBi3bSoYowWKWMQ7+fILCSs72qnsyc8nb36HudljucGQlIKy80NSzZpPPsb/Z4vTBdx094Eo4",
+	"HXnYoDDmvW1bqS0h3oqbgKjgRK4flCdtsUTX5D8Vpkpjfn12WvzzP1+QbTRodVv1+0TK3DQrCJ0zk8DU",
+	"mxZqVXVXjNTREgZsPk8JhR/mhAsZiDWNEs4o+a8GM5gzHlwXT/CFZMADU14SZ0oYkSryos2gYnrw6e6m",
+	"doJN0PnZ+GxsKxkU5wRN0OXZ+dlYXw1loo0dJboeNUqJyb4WYCoFrjZxE6MJulWDrS7PxXh8tB6PrYl5",
+	"mjx3nEUgREBEgLWKaorEC6Hj6VpIyNBUPXN2cMDxutOQez36TSx5AK5iVoBpHMRY4icsIMAcAqNxGaIP",
+	"48uu5St9q3ZYhxeW5yNcyGSkqa9eA3N3yJnwukON/1tvkMiVorg5hn5mxo+D3XJgLPDWLjxbtWw3K8st",
+	"GC+OBqM96T0w2kM6cDWp4CUBmQAPGA8ok4FMQI2xgsoAVkRIoaC9uvjpEGgVlF5gdUxbdwOrIV3/Yj1+",
+	"HEQHloK6SkBDADzePqy3f329Y+WZwJ0Mek/aFDWIOKjYrFEzCh0BtblrsIxeXfO97EavasfcsoXuzNa7",
+	"+x3F282UUdX9L6eHY9/n3Fa76H1B2zhhHaoGzfPBaKrZx9qxKaHPg2C/JfR549q46hn8CdC/2s6EnIGB",
+	"8o/bbydEyCV62of1FO9R9yX7ANS7sBs2u0lP4Wtfi+FPut0uj7Xd2ILZmkwXXGr8NHg1miqH7gy7SKBP",
+	"0oDDkun90W+26/WM5owvWI/9n/W4I9b3fO8E+d5ApFR2LvuT8+PjROFldnijMdwvCwyb4t55Uuh8Hdi/",
+	"QJ0+LbRt0z4OmAnvJVq9GRb3TNYPFBMLxbdM4zgsiJC27NUBlp3xznKBtwiT9RpCYP8NEnwtoNh/yxwJ",
+	"tKy7nPV3kNfmTzG6jnlClts/6G65y4p3J8e+vN4jnbUCKreINY26KfxQVSDhRCyuNzreOOQ0ugEeUFwR",
+	"PXDVcX0AMB4DhzjgkDEJgSuXH0DqE+bDA9mgwZ+W5g2+dDfKgqe2dC0mI82QM1jhLE/hLGIZKqfl/wIA",
+	"AP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -39,6 +39,16 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	if len(req.Mutations) > s.maxMutations {
 		return Response{}, clientError("too_many_mutations", fmt.Sprintf("at most %d mutations are allowed", s.maxMutations))
 	}
+	seenMutationIDs := make(map[uuid.UUID]struct{}, len(req.Mutations))
+	for _, mutation := range req.Mutations {
+		if mutation.ID == uuid.Nil {
+			return Response{}, clientError("invalid_mutation_id", "every mutation id must be a non-zero UUID")
+		}
+		if _, exists := seenMutationIDs[mutation.ID]; exists {
+			return Response{}, clientError("duplicate_mutation_id", "mutation ids must be unique within a request")
+		}
+		seenMutationIDs[mutation.ID] = struct{}{}
+	}
 
 	limit := req.Limit
 	if limit <= 0 || limit > s.defaultMaxChange {
@@ -61,13 +71,13 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	outcomeByID := make(map[uuid.UUID]MutationOutcome, len(req.Mutations))
 	ordered := append([]Mutation(nil), req.Mutations...)
 	slices.SortStableFunc(ordered, func(a, b Mutation) int {
-		if a.Entity == b.Entity {
-			return 0
+		if a.Entity != b.Entity {
+			if a.Entity == "session" {
+				return -1
+			}
+			return 1
 		}
-		if a.Entity == "session" {
-			return -1
-		}
-		return 1
+		return strings.Compare(a.EntityID.String(), b.EntityID.String())
 	})
 
 	for _, mutation := range ordered {
@@ -116,6 +126,9 @@ func (s *Service) applyMutation(
 	m Mutation,
 ) (MutationOutcome, error) {
 	if m.ID != uuid.Nil {
+		if err := q.AcquireAdvisoryLock(ctx, userID.String()+":"+deviceID.String()+":mutation:"+m.ID.String()); err != nil {
+			return MutationOutcome{}, err
+		}
 		raw, err := q.GetProcessedMutation(ctx, storedb.GetProcessedMutationParams{
 			UserID: userID, DeviceID: deviceID, MutationID: m.ID,
 		})
@@ -161,6 +174,9 @@ func (s *Service) applyMutation(
 func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
+	}
+	if err := q.AcquireAdvisoryLock(ctx, userID.String()+":session:"+m.EntityID.String()); err != nil {
+		return internal(m.ID, err)
 	}
 	current, currentErr := q.GetSessionForUpdate(ctx, storedb.GetSessionForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
@@ -225,6 +241,9 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
+	}
+	if err := q.AcquireAdvisoryLock(ctx, userID.String()+":solve:"+m.EntityID.String()); err != nil {
+		return internal(m.ID, err)
 	}
 	current, currentErr := q.GetSolveForUpdate(ctx, storedb.GetSolveForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
