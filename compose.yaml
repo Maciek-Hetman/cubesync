@@ -36,7 +36,7 @@ services:
       HTTP_ADDRESS: :43781
       JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
     ports:
-      - "${API_PORT:-43781}:43781"
+      - "${API_BIND:-0.0.0.0}:${API_PORT:-43781}:43781"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -3,10 +3,15 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -15,6 +20,7 @@ import (
 	"github.com/Maciek-Hetman/cubing-sync-backend/db/migrations"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/auth"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
+	"github.com/Maciek-Hetman/cubing-sync-backend/internal/httpapi"
 	syncservice "github.com/Maciek-Hetman/cubing-sync-backend/internal/sync"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -130,6 +136,9 @@ func TestBackendIntegration(t *testing.T) {
 	t.Run("two-device synchronization and conflict", func(t *testing.T) {
 		testSynchronization(t, ctx, pool, user.ID)
 	})
+	t.Run("HTTP authentication boundary", func(t *testing.T) {
+		testHTTPBoundary(t, ctx, cfg, pool, authService)
+	})
 }
 
 func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) {
@@ -223,6 +232,62 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	isolated, err := service.Sync(ctx, otherUser, syncservice.Request{Device: syncservice.Device{ID: uuid.New()}})
 	if err != nil || len(isolated.Changes) != 0 {
 		t.Fatalf("cross-user change leak: response=%+v error=%v", isolated, err)
+	}
+}
+
+func testHTTPBoundary(
+	t *testing.T,
+	ctx context.Context,
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	authService *auth.Service,
+) {
+	server := httptest.NewServer(httpapi.NewRouter(cfg, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/v1/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated profile returned %d", response.StatusCode)
+	}
+
+	session, err := authService.Login(ctx, "cube@example.test", "an even better password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated profile returned %d", response.StatusCode)
+	}
+
+	body := mustJSON(t, syncservice.Request{
+		Device: syncservice.Device{ID: uuid.New(), Name: "HTTP test", Platform: "test"},
+	})
+	request, err = http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/sync", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated sync returned %d", response.StatusCode)
 	}
 }
 

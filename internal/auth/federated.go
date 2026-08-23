@@ -39,11 +39,23 @@ type FederatedVerifier interface {
 }
 
 type OIDCVerifier struct {
-	config config.Config
+	config    config.Config
+	providers map[string]oidcProviderMetadata
+}
+
+type oidcProviderMetadata struct {
+	issuer  string
+	jwksURL string
 }
 
 func NewOIDCVerifier(cfg config.Config) *OIDCVerifier {
-	return &OIDCVerifier{config: cfg}
+	return &OIDCVerifier{
+		config: cfg,
+		providers: map[string]oidcProviderMetadata{
+			"google": {issuer: "https://accounts.google.com", jwksURL: "https://www.googleapis.com/oauth2/v3/certs"},
+			"apple":  {issuer: "https://appleid.apple.com", jwksURL: "https://appleid.apple.com/auth/keys"},
+		},
+	}
 }
 
 func (v *OIDCVerifier) Verify(ctx context.Context, provider string, input FederatedInput) (FederatedIdentity, error) {
@@ -66,12 +78,12 @@ func (v *OIDCVerifier) Verify(ctx context.Context, provider string, input Federa
 		return FederatedIdentity{}, authError("invalid_social_token", "id_token or code is required")
 	}
 
-	issuer, jwksURL, err := providerMetadata(provider)
-	if err != nil {
-		return FederatedIdentity{}, err
+	metadata, ok := v.providers[provider]
+	if !ok {
+		return FederatedIdentity{}, authError("unsupported_provider", "provider must be google or apple")
 	}
-	keySet := oidc.NewRemoteKeySet(ctx, jwksURL)
-	verifier := oidc.NewVerifier(issuer, keySet, &oidc.Config{SkipClientIDCheck: true})
+	keySet := oidc.NewRemoteKeySet(ctx, metadata.jwksURL)
+	verifier := oidc.NewVerifier(metadata.issuer, keySet, &oidc.Config{SkipClientIDCheck: true})
 	token, err := verifier.Verify(ctx, rawToken)
 	if err != nil {
 		return FederatedIdentity{}, authError("invalid_social_token", "identity token is invalid")
