@@ -1,0 +1,587 @@
+openapi: 3.1.0
+info:
+  title: CubeTimer Sync API
+  version: 1.0.0
+  description: Authenticated, offline-first synchronization for CubeTimer clients.
+servers:
+  - url: https://sync.example.com
+paths:
+  /health/live:
+    get:
+      operationId: live
+      tags: [system]
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /health/ready:
+    get:
+      operationId: ready
+      tags: [system]
+      responses:
+        "200":
+          description: Service and database are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordCredentials"
+      responses:
+        "202":
+          description: Verification message queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /v1/auth/email/resend:
+    post:
+      operationId: resendVerification
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "202":
+          description: Request accepted whether or not the account exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "429":
+          $ref: "#/components/responses/Error"
+  /v1/auth/email/verify:
+    get:
+      operationId: verifyEmail
+      tags: [auth]
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Email verified and session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordCredentials"
+      responses:
+        "200":
+          description: Authenticated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /v1/auth/refresh:
+    post:
+      operationId: refresh
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshToken"
+      responses:
+        "200":
+          description: Rotated session tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshToken"
+      responses:
+        "204":
+          description: Refresh token revoked
+  /v1/auth/password/forgot:
+    post:
+      operationId: forgotPassword
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "202":
+          description: Request accepted whether or not the account exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /v1/auth/password/reset:
+    post:
+      operationId: resetPassword
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 10
+                  maxLength: 128
+      responses:
+        "200":
+          description: Password changed and session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/auth/federated/{provider}:
+    post:
+      operationId: federatedLogin
+      tags: [auth]
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FederatedInput"
+      responses:
+        "200":
+          description: Authenticated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /v1/auth/link/{provider}:
+    post:
+      operationId: linkFederatedIdentity
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FederatedInput"
+      responses:
+        "204":
+          description: Identity linked
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /v1/me:
+    get:
+      operationId: getCurrentUser
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error"
+  /v1/sync:
+    post:
+      operationId: synchronize
+      tags: [sync]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRequest"
+      responses:
+        "200":
+          description: Mutation outcomes and ordered remote changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Provider:
+      in: path
+      name: provider
+      required: true
+      schema:
+        type: string
+        enum: [google, apple]
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    PasswordCredentials:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+          maxLength: 128
+    RefreshToken:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    User:
+      type: object
+      required: [id, email, email_verified]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+    AuthSession:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          format: int64
+        user:
+          $ref: "#/components/schemas/User"
+    FederatedInput:
+      type: object
+      required: [client_id, nonce]
+      anyOf:
+        - required: [id_token]
+        - required: [code, redirect_uri, code_verifier]
+      properties:
+        id_token:
+          type: string
+        code:
+          type: string
+        client_id:
+          type: string
+        redirect_uri:
+          type: string
+          format: uri
+        code_verifier:
+          type: string
+        nonce:
+          type: string
+    Device:
+      type: object
+      required: [id, name, platform]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        platform:
+          type: string
+          maxLength: 40
+    Session:
+      type: object
+      required: [id, name, event, kind, started_at, archived, version, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        event:
+          $ref: "#/components/schemas/Event"
+        kind:
+          type: string
+          enum: [manual, automatic]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        archived:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+    Solve:
+      type: object
+      required: [id, duration_ms, penalty, solved_at, scramble, event, version, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: [string, "null"]
+          format: uuid
+        duration_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        penalty:
+          type: string
+          enum: [none, plus_two, dnf]
+        solved_at:
+          type: string
+          format: date-time
+        scramble:
+          type: string
+          maxLength: 4096
+        event:
+          $ref: "#/components/schemas/Event"
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+    Event:
+      type: string
+      enum: [2x2, 3x3, 4x4, 5x5, megaminx, pyraminx]
+    Mutation:
+      type: object
+      required: [id, entity, entity_id, operation, base_version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        entity:
+          type: string
+          enum: [session, solve]
+        entity_id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum: [upsert, delete]
+        base_version:
+          type: integer
+          format: int64
+          minimum: 0
+        data:
+          oneOf:
+            - $ref: "#/components/schemas/Session"
+            - $ref: "#/components/schemas/Solve"
+    MutationOutcome:
+      type: object
+      required: [mutation_id, status]
+      properties:
+        mutation_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, rejected, conflict]
+        version:
+          type: integer
+          format: int64
+        code:
+          type: string
+        message:
+          type: string
+        current:
+          oneOf:
+            - $ref: "#/components/schemas/Session"
+            - $ref: "#/components/schemas/Solve"
+    Change:
+      type: object
+      required: [cursor, entity, entity_id, operation, version, data, changed_at]
+      properties:
+        cursor:
+          type: integer
+          format: int64
+        entity:
+          type: string
+          enum: [session, solve]
+        entity_id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum: [upsert, delete]
+        version:
+          type: integer
+          format: int64
+        data:
+          oneOf:
+            - $ref: "#/components/schemas/Session"
+            - $ref: "#/components/schemas/Solve"
+        changed_at:
+          type: string
+          format: date-time
+    SyncRequest:
+      type: object
+      required: [cursor, device, mutations]
+      properties:
+        cursor:
+          type: integer
+          format: int64
+          minimum: 0
+        device:
+          $ref: "#/components/schemas/Device"
+        mutations:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/Mutation"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+    SyncResponse:
+      type: object
+      required: [outcomes, changes, next_cursor, has_more]
+      properties:
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MutationOutcome"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Change"
+        next_cursor:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean

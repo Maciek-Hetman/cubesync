@@ -1,0 +1,7 @@
+package: apicontract
+output: internal/apicontract/types.gen.go
+generate:
+  models: true
+  embedded-spec: true
+output-options:
+  skip-prune: true

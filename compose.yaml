@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cubetimer
+      POSTGRES_USER: cubetimer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-development-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cubetimer -d cubetimer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: postgres://cubetimer:${POSTGRES_PASSWORD:-development-password}@postgres:5432/cubetimer?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://cubetimer:${POSTGRES_PASSWORD:-development-password}@postgres:5432/cubetimer?sslmode=disable
+      HTTP_ADDRESS: :43781
+      JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+    ports:
+      - "${API_PORT:-43781}:43781"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cubing-sync", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["dev-mail"]
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+volumes:
+  postgres_data:
