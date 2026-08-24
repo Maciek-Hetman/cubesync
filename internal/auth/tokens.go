@@ -12,7 +12,8 @@ import (
 )
 
 type AccessClaims struct {
-	EmailVerified bool `json:"email_verified"`
+	EmailVerified bool   `json:"email_verified"`
+	UserRole      string `json:"user_role"`
 	jwt.RegisteredClaims
 }
 
@@ -27,11 +28,15 @@ func NewTokenManager(secret []byte, issuer string, lifetime time.Duration) *Toke
 	return &TokenManager{secret: secret, issuer: issuer, lifetime: lifetime, now: time.Now}
 }
 
-func (m *TokenManager) IssueAccessToken(userID uuid.UUID, emailVerified bool) (string, time.Time, error) {
+func (m *TokenManager) IssueAccessToken(userID uuid.UUID, emailVerified bool, role string) (string, time.Time, error) {
 	now := m.now().UTC()
 	expiresAt := now.Add(m.lifetime)
+	if role == "" {
+		role = RoleUser
+	}
 	claims := AccessClaims{
 		EmailVerified: emailVerified,
+		UserRole:      role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: m.issuer, Subject: userID.String(), Audience: jwt.ClaimStrings{"cubetimer-clients"},
 			ExpiresAt: jwt.NewNumericDate(expiresAt), IssuedAt: jwt.NewNumericDate(now),
@@ -57,6 +62,9 @@ func (m *TokenManager) ParseAccessToken(raw string) (uuid.UUID, AccessClaims, er
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return uuid.Nil, AccessClaims{}, errors.New("invalid access token subject")
+	}
+	if claims.UserRole == "" {
+		claims.UserRole = RoleUser
 	}
 	return userID, claims, nil
 }

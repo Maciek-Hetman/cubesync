@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Maciek-Hetman/cubing-sync-backend/internal/admin"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/auth"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
 	syncservice "github.com/Maciek-Hetman/cubing-sync-backend/internal/sync"
@@ -22,22 +23,24 @@ type Handler struct {
 	logger *slog.Logger
 	auth   *auth.Service
 	sync   *syncservice.Service
+	admin  *admin.Service
 }
 
 func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	authService := auth.NewService(cfg, db, auth.NewMailer(cfg, logger), auth.NewOIDCVerifier(cfg))
 	h := &Handler{
 		config: cfg, db: db, logger: logger, auth: authService,
-		sync: syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges),
+		sync:  syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges),
+		admin: admin.NewService(db),
 	}
 	authLimit := newIPRateLimiter(10, 5)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(h.accessLog)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(h.securityHeaders)
 	r.Use(h.cors)
-	r.Use(h.accessLog)
 
 	r.Get("/health/live", h.live)
 	r.Get("/health/ready", h.ready)
@@ -66,6 +69,12 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 		r.Use(h.authenticate)
 		r.Get("/v1/me", h.me)
 		r.With(h.requireVerified).Post("/v1/sync", h.synchronize)
+		r.Group(func(r chi.Router) {
+			r.Use(h.requireAdmin)
+			r.Get("/v1/admin/stats/overview", h.adminOverview)
+			r.Get("/v1/admin/stats/requests", h.adminRequestStats)
+			r.Get("/v1/admin/stats/errors", h.adminErrorStats)
+		})
 	})
 
 	return r
@@ -123,14 +132,25 @@ func (h *Handler) accessLog(next http.Handler) http.Handler {
 		started := time.Now()
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
+		duration := time.Since(started)
+		status := ww.Status()
 		h.logger.Info("http_request",
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", ww.Status(),
+			"status", status,
 			"bytes", ww.BytesWritten(),
-			"duration_ms", time.Since(started).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 			"request_id", middleware.GetReqID(r.Context()),
 		)
+		route := ""
+		if rc := chi.RouteContext(r.Context()); rc != nil {
+			route = rc.RoutePattern()
+		}
+		metricCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := h.admin.RecordRequest(metricCtx, r.Method, route, status, duration); err != nil {
+			h.logger.Error("request_metric_failed", "error", err)
+		}
 	})
 }
 

@@ -19,6 +19,42 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AdminErrorStatsInterval.
+const (
+	AdminErrorStatsIntervalDay  AdminErrorStatsInterval = "day"
+	AdminErrorStatsIntervalHour AdminErrorStatsInterval = "hour"
+)
+
+// Valid indicates whether the value is a known member of the AdminErrorStatsInterval enum.
+func (e AdminErrorStatsInterval) Valid() bool {
+	switch e {
+	case AdminErrorStatsIntervalDay:
+		return true
+	case AdminErrorStatsIntervalHour:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminRequestStatsInterval.
+const (
+	AdminRequestStatsIntervalDay  AdminRequestStatsInterval = "day"
+	AdminRequestStatsIntervalHour AdminRequestStatsInterval = "hour"
+)
+
+// Valid indicates whether the value is a known member of the AdminRequestStatsInterval enum.
+func (e AdminRequestStatsInterval) Valid() bool {
+	switch e {
+	case AdminRequestStatsIntervalDay:
+		return true
+	case AdminRequestStatsIntervalHour:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuthSessionTokenType.
 const (
 	Bearer AuthSessionTokenType = "Bearer"
@@ -235,6 +271,24 @@ func (e SolveInputPenalty) Valid() bool {
 	}
 }
 
+// Defines values for UserUserRole.
+const (
+	UserUserRoleAdmin UserUserRole = "admin"
+	UserUserRoleUser  UserUserRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the UserUserRole enum.
+func (e UserUserRole) Valid() bool {
+	switch e {
+	case UserUserRoleAdmin:
+		return true
+	case UserUserRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Provider.
 const (
 	ProviderApple  Provider = "apple"
@@ -247,6 +301,60 @@ func (e Provider) Valid() bool {
 	case ProviderApple:
 		return true
 	case ProviderGoogle:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatsInterval.
+const (
+	StatsIntervalDay  StatsInterval = "day"
+	StatsIntervalHour StatsInterval = "hour"
+)
+
+// Valid indicates whether the value is a known member of the StatsInterval enum.
+func (e StatsInterval) Valid() bool {
+	switch e {
+	case StatsIntervalDay:
+		return true
+	case StatsIntervalHour:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetAdminErrorStatsParamsInterval.
+const (
+	GetAdminErrorStatsParamsIntervalDay  GetAdminErrorStatsParamsInterval = "day"
+	GetAdminErrorStatsParamsIntervalHour GetAdminErrorStatsParamsInterval = "hour"
+)
+
+// Valid indicates whether the value is a known member of the GetAdminErrorStatsParamsInterval enum.
+func (e GetAdminErrorStatsParamsInterval) Valid() bool {
+	switch e {
+	case GetAdminErrorStatsParamsIntervalDay:
+		return true
+	case GetAdminErrorStatsParamsIntervalHour:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetAdminRequestStatsParamsInterval.
+const (
+	GetAdminRequestStatsParamsIntervalDay  GetAdminRequestStatsParamsInterval = "day"
+	GetAdminRequestStatsParamsIntervalHour GetAdminRequestStatsParamsInterval = "hour"
+)
+
+// Valid indicates whether the value is a known member of the GetAdminRequestStatsParamsInterval enum.
+func (e GetAdminRequestStatsParamsInterval) Valid() bool {
+	switch e {
+	case GetAdminRequestStatsParamsIntervalDay:
+		return true
+	case GetAdminRequestStatsParamsIntervalHour:
 		return true
 	default:
 		return false
@@ -287,6 +395,64 @@ func (e LinkFederatedIdentityParamsProvider) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AdminErrorStats defines model for AdminErrorStats.
+type AdminErrorStats struct {
+	From     time.Time               `json:"from"`
+	Interval AdminErrorStatsInterval `json:"interval"`
+	Points   []AdminErrorStatsPoint  `json:"points"`
+	To       time.Time               `json:"to"`
+}
+
+// AdminErrorStatsInterval defines model for AdminErrorStats.Interval.
+type AdminErrorStatsInterval string
+
+// AdminErrorStatsPoint defines model for AdminErrorStatsPoint.
+type AdminErrorStatsPoint struct {
+	Bucket       time.Time `json:"bucket"`
+	Method       string    `json:"method"`
+	RequestCount int64     `json:"request_count"`
+	Route        string    `json:"route"`
+	StatusCode   int       `json:"status_code"`
+}
+
+// AdminOverviewStats defines model for AdminOverviewStats.
+type AdminOverviewStats struct {
+	ActiveUsers24h int64 `json:"active_users_24h"`
+	ActiveUsers30d int64 `json:"active_users_30d"`
+	ActiveUsers7d  int64 `json:"active_users_7d"`
+	NewUsers24h    int64 `json:"new_users_24h"`
+	NewUsers30d    int64 `json:"new_users_30d"`
+	NewUsers7d     int64 `json:"new_users_7d"`
+	TotalDevices   int64 `json:"total_devices"`
+	TotalSessions  int64 `json:"total_sessions"`
+	TotalSolves    int64 `json:"total_solves"`
+	TotalUsers     int64 `json:"total_users"`
+	VerifiedUsers  int64 `json:"verified_users"`
+}
+
+// AdminRequestStats defines model for AdminRequestStats.
+type AdminRequestStats struct {
+	From     time.Time                 `json:"from"`
+	Interval AdminRequestStatsInterval `json:"interval"`
+	Points   []AdminRequestStatsPoint  `json:"points"`
+	To       time.Time                 `json:"to"`
+}
+
+// AdminRequestStatsInterval defines model for AdminRequestStats.Interval.
+type AdminRequestStatsInterval string
+
+// AdminRequestStatsPoint defines model for AdminRequestStatsPoint.
+type AdminRequestStatsPoint struct {
+	AverageDurationMs float64   `json:"average_duration_ms"`
+	Bucket            time.Time `json:"bucket"`
+	MaxDurationMs     int64     `json:"max_duration_ms"`
+	RequestCount      int64     `json:"request_count"`
+	Status2xx         int64     `json:"status_2xx"`
+	Status3xx         int64     `json:"status_3xx"`
+	Status4xx         int64     `json:"status_4xx"`
+	Status5xx         int64     `json:"status_5xx"`
 }
 
 // AuthSession defines model for AuthSession.
@@ -501,10 +667,43 @@ type User struct {
 	Email         openapi_types.Email `json:"email"`
 	EmailVerified bool                `json:"email_verified"`
 	Id            openapi_types.UUID  `json:"id"`
+	UserRole      UserUserRole        `json:"user_role"`
 }
+
+// UserUserRole defines model for User.UserRole.
+type UserUserRole string
 
 // Provider defines model for Provider.
 type Provider string
+
+// StatsFrom defines model for StatsFrom.
+type StatsFrom = time.Time
+
+// StatsInterval defines model for StatsInterval.
+type StatsInterval string
+
+// StatsTo defines model for StatsTo.
+type StatsTo = time.Time
+
+// GetAdminErrorStatsParams defines parameters for GetAdminErrorStats.
+type GetAdminErrorStatsParams struct {
+	From     *StatsFrom                        `form:"from,omitempty" json:"from,omitempty"`
+	To       *StatsTo                          `form:"to,omitempty" json:"to,omitempty"`
+	Interval *GetAdminErrorStatsParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`
+}
+
+// GetAdminErrorStatsParamsInterval defines parameters for GetAdminErrorStats.
+type GetAdminErrorStatsParamsInterval string
+
+// GetAdminRequestStatsParams defines parameters for GetAdminRequestStats.
+type GetAdminRequestStatsParams struct {
+	From     *StatsFrom                          `form:"from,omitempty" json:"from,omitempty"`
+	To       *StatsTo                            `form:"to,omitempty" json:"to,omitempty"`
+	Interval *GetAdminRequestStatsParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`
+}
+
+// GetAdminRequestStatsParamsInterval defines parameters for GetAdminRequestStats.
+type GetAdminRequestStatsParamsInterval string
 
 // ResendVerificationJSONBody defines parameters for ResendVerification.
 type ResendVerificationJSONBody struct {
@@ -919,40 +1118,48 @@ func (t *MutationOutcome_Current) UnmarshalJSON(b []byte) error {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"AP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

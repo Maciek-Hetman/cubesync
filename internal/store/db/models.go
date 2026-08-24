@@ -89,6 +89,16 @@ type RefreshToken struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+type RequestStatsHourly struct {
+	BucketHour      time.Time `json:"bucket_hour"`
+	Method          string    `json:"method"`
+	Route           string    `json:"route"`
+	StatusCode      int32     `json:"status_code"`
+	RequestCount    int64     `json:"request_count"`
+	TotalDurationMs int64     `json:"total_duration_ms"`
+	MaxDurationMs   int64     `json:"max_duration_ms"`
+}
+
 type Solf struct {
 	ID         uuid.UUID     `json:"id"`
 	UserID     uuid.UUID     `json:"user_id"`
@@ -109,4 +119,5 @@ type User struct {
 	EmailVerifiedAt *time.Time `json:"email_verified_at"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	UserRole        string     `json:"user_role"`
 }

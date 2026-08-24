@@ -12,6 +12,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const createAdminUser = `-- name: CreateAdminUser :one
+INSERT INTO users (id, email, email_verified_at, user_role)
+VALUES ($1, $2, now(), 'admin')
+RETURNING id, email, email_verified_at, created_at, updated_at, user_role
+`
+
+type CreateAdminUserParams struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+func (q *Queries) CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createAdminUser, arg.ID, arg.Email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UserRole,
+	)
+	return i, err
+}
+
 const createIdentity = `-- name: CreateIdentity :exec
 INSERT INTO identities (id, user_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
@@ -102,7 +127,7 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email)
 VALUES ($1, $2)
-RETURNING id, email, email_verified_at, created_at, updated_at
+RETURNING id, email, email_verified_at, created_at, updated_at, user_role
 `
 
 type CreateUserParams struct {
@@ -119,6 +144,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UserRole,
 	)
 	return i, err
 }
@@ -174,7 +200,7 @@ func (q *Queries) GetOneTimeTokenForUpdate(ctx context.Context, arg GetOneTimeTo
 }
 
 const getPasswordCredentialByEmail = `-- name: GetPasswordCredentialByEmail :one
-SELECT u.id, u.email, u.email_verified_at, p.password_hash
+SELECT u.id, u.email, u.email_verified_at, u.user_role, p.password_hash
 FROM users u
 JOIN password_credentials p ON p.user_id = u.id
 WHERE u.email = lower($1)
@@ -184,6 +210,7 @@ type GetPasswordCredentialByEmailRow struct {
 	ID              uuid.UUID  `json:"id"`
 	Email           string     `json:"email"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	UserRole        string     `json:"user_role"`
 	PasswordHash    string     `json:"password_hash"`
 }
 
@@ -194,6 +221,7 @@ func (q *Queries) GetPasswordCredentialByEmail(ctx context.Context, lower string
 		&i.ID,
 		&i.Email,
 		&i.EmailVerifiedAt,
+		&i.UserRole,
 		&i.PasswordHash,
 	)
 	return i, err
@@ -222,7 +250,7 @@ func (q *Queries) GetRefreshTokenForUpdate(ctx context.Context, tokenHash []byte
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, email_verified_at, created_at, updated_at FROM users WHERE email = lower($1)
+SELECT id, email, email_verified_at, created_at, updated_at, user_role FROM users WHERE email = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
@@ -234,12 +262,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UserRole,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, email_verified_at, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, email_verified_at, created_at, updated_at, user_role FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -251,12 +280,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UserRole,
 	)
 	return i, err
 }
 
 const getUserByIdentity = `-- name: GetUserByIdentity :one
-SELECT u.id, u.email, u.email_verified_at, u.created_at, u.updated_at
+SELECT u.id, u.email, u.email_verified_at, u.created_at, u.updated_at, u.user_role
 FROM identities i
 JOIN users u ON u.id = i.user_id
 WHERE i.provider = $1 AND i.subject = $2
@@ -276,6 +306,7 @@ func (q *Queries) GetUserByIdentity(ctx context.Context, arg GetUserByIdentityPa
 		&i.EmailVerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UserRole,
 	)
 	return i, err
 }

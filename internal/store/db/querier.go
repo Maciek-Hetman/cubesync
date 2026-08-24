@@ -14,6 +14,7 @@ import (
 type Querier interface {
 	AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error
 	AppendChange(ctx context.Context, arg AppendChangeParams) (int64, error)
+	CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (User, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) error
 	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) error
@@ -24,6 +25,7 @@ type Querier interface {
 	GetIdentityForUserProvider(ctx context.Context, arg GetIdentityForUserProviderParams) (Identity, error)
 	GetLiveSession(ctx context.Context, arg GetLiveSessionParams) (CubeSession, error)
 	GetOneTimeTokenForUpdate(ctx context.Context, arg GetOneTimeTokenForUpdateParams) (OneTimeToken, error)
+	GetOverviewStats(ctx context.Context) (GetOverviewStatsRow, error)
 	GetPasswordCredentialByEmail(ctx context.Context, lower string) (GetPasswordCredentialByEmailRow, error)
 	GetProcessedMutation(ctx context.Context, arg GetProcessedMutationParams) (json.RawMessage, error)
 	GetRefreshTokenForUpdate(ctx context.Context, tokenHash []byte) (RefreshToken, error)
@@ -37,9 +39,12 @@ type Querier interface {
 	InvalidateUserOneTimeTokens(ctx context.Context, arg InvalidateUserOneTimeTokensParams) error
 	LatestChangeCursor(ctx context.Context, userID uuid.UUID) (int64, error)
 	ListChanges(ctx context.Context, arg ListChangesParams) ([]ChangeLog, error)
+	ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error)
+	ListRequestStats(ctx context.Context, arg ListRequestStatsParams) ([]ListRequestStatsRow, error)
 	MarkOneTimeTokenUsed(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	RecordProcessedMutation(ctx context.Context, arg RecordProcessedMutationParams) error
+	RecordRequestStat(ctx context.Context, arg RecordRequestStatParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	RevokeRefreshToken(ctx context.Context, tokenHash []byte) error

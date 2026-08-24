@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/db/migrations"
+	"github.com/Maciek-Hetman/cubing-sync-backend/internal/admin"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/auth"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/httpapi"
@@ -138,6 +140,9 @@ func TestBackendIntegration(t *testing.T) {
 	})
 	t.Run("HTTP authentication boundary", func(t *testing.T) {
 		testHTTPBoundary(t, ctx, cfg, pool, authService)
+	})
+	t.Run("admin usage statistics", func(t *testing.T) {
+		testAdminStatistics(t, ctx, cfg, pool, authService)
 	})
 }
 
@@ -289,6 +294,182 @@ func testHTTPBoundary(
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("authenticated sync returned %d", response.StatusCode)
 	}
+}
+
+func testAdminStatistics(
+	t *testing.T,
+	ctx context.Context,
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	authService *auth.Service,
+) {
+	if _, err := pool.Exec(ctx, "TRUNCATE request_stats_hourly"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(httpapi.NewRouter(cfg, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer server.Close()
+
+	unauth, err := http.Get(server.URL + "/v1/admin/stats/overview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauth.Body.Close()
+	if unauth.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated admin overview returned %d", unauth.StatusCode)
+	}
+
+	userSession, err := authService.Login(ctx, "cube@example.test", "an even better password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userSession.User.UserRole != auth.RoleUser {
+		t.Fatalf("expected default role user, got %q", userSession.User.UserRole)
+	}
+	forbidden := adminGET(t, ctx, server.URL+"/v1/admin/stats/overview", userSession.AccessToken)
+	defer forbidden.Body.Close()
+	if forbidden.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin overview returned %d", forbidden.StatusCode)
+	}
+
+	if _, err := authService.CreateAdmin(ctx, "cube@example.test", "a different long password"); authCode(err) != "email_in_use" {
+		t.Fatal("expected existing email to be rejected without promotion")
+	}
+	if _, err := authService.CreateAdmin(ctx, "not-an-email", "operator secret password"); authCode(err) != "invalid_email" {
+		t.Fatal("expected invalid email to be rejected")
+	}
+	if _, err := authService.CreateAdmin(ctx, "operator@example.test", "short"); authCode(err) != "invalid_password" {
+		t.Fatal("expected invalid password to be rejected")
+	}
+	created, err := authService.CreateAdmin(ctx, "operator@example.test", "operator secret password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.UserRole != auth.RoleAdmin || !created.EmailVerified {
+		t.Fatalf("created admin is not ready to sign in: %+v", created)
+	}
+	if _, err := authService.CreateAdmin(ctx, "operator@example.test", "operator secret password"); authCode(err) != "email_in_use" {
+		t.Fatal("expected duplicate admin email to be rejected")
+	}
+	adminSession, err := authService.Login(ctx, "operator@example.test", "operator secret password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminSession.User.UserRole != auth.RoleAdmin || !adminSession.User.EmailVerified {
+		t.Fatalf("admin login session is not privileged: %+v", adminSession.User)
+	}
+
+	badJSON, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/auth/login", bytes.NewReader([]byte(`{`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badJSON.Header.Set("Content-Type", "application/json")
+	badJSONResp, err := http.DefaultClient.Do(badJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = badJSONResp.Body.Close()
+	if badJSONResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid json login returned %d", badJSONResp.StatusCode)
+	}
+	health, err := http.Get(server.URL + "/health/live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = health.Body.Close()
+	meOK := adminGET(t, ctx, server.URL+"/v1/me", adminSession.AccessToken)
+	defer meOK.Body.Close()
+	if meOK.StatusCode != http.StatusOK {
+		t.Fatalf("admin profile returned %d", meOK.StatusCode)
+	}
+	version, err := http.Get(server.URL + "/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = version.Body.Close()
+
+	overviewResp := adminGET(t, ctx, server.URL+"/v1/admin/stats/overview", adminSession.AccessToken)
+	defer overviewResp.Body.Close()
+	if overviewResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin overview returned %d", overviewResp.StatusCode)
+	}
+	var overview admin.Overview
+	if err := json.NewDecoder(overviewResp.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.TotalUsers < 2 || overview.VerifiedUsers < 2 || overview.TotalDevices < 1 || overview.TotalSessions < 1 || overview.TotalSolves < 1 {
+		t.Fatalf("unexpected overview totals: %+v", overview)
+	}
+	if overview.NewUsers24h < 1 || overview.ActiveUsers24h < 1 {
+		t.Fatalf("expected recent signup and device activity: %+v", overview)
+	}
+
+	invalidRange := adminGET(t, ctx, server.URL+"/v1/admin/stats/requests?interval=week", adminSession.AccessToken)
+	defer invalidRange.Body.Close()
+	if invalidRange.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid interval returned %d", invalidRange.StatusCode)
+	}
+
+	from := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	to := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	requestURL := server.URL + "/v1/admin/stats/requests?from=" + from + "&to=" + to + "&interval=hour"
+	requestsResp := adminGET(t, ctx, requestURL, adminSession.AccessToken)
+	defer requestsResp.Body.Close()
+	if requestsResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin request stats returned %d", requestsResp.StatusCode)
+	}
+	var requests admin.RequestSeries
+	if err := json.NewDecoder(requestsResp.Body).Decode(&requests); err != nil {
+		t.Fatal(err)
+	}
+	var total, status2xx, status4xx int64
+	for _, point := range requests.Points {
+		total += point.RequestCount
+		status2xx += point.Status2xx
+		status4xx += point.Status4xx
+		if point.RequestCount > 0 && point.AverageDurationMS < 0 {
+			t.Fatalf("negative average duration: %+v", point)
+		}
+	}
+	if total < 2 || status2xx < 1 || status4xx < 1 {
+		t.Fatalf("expected recorded application requests: %+v", requests)
+	}
+
+	errorsURL := server.URL + "/v1/admin/stats/errors?from=" + from + "&to=" + to + "&interval=hour"
+	errorsResp := adminGET(t, ctx, errorsURL, adminSession.AccessToken)
+	defer errorsResp.Body.Close()
+	if errorsResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin error stats returned %d", errorsResp.StatusCode)
+	}
+	var errors admin.ErrorSeries
+	if err := json.NewDecoder(errorsResp.Body).Decode(&errors); err != nil {
+		t.Fatal(err)
+	}
+	foundLogin400 := false
+	for _, point := range errors.Points {
+		if point.Method == http.MethodPost && point.Route == "/v1/auth/login" && point.StatusCode == http.StatusBadRequest && point.RequestCount >= 1 {
+			foundLogin400 = true
+		}
+		if point.Route == "/health/live" || strings.HasPrefix(point.Route, "/v1/admin/stats") {
+			t.Fatalf("internal route leaked into error stats: %+v", point)
+		}
+	}
+	if !foundLogin400 {
+		t.Fatalf("expected login 400 breakdown: %+v", errors)
+	}
+}
+
+func adminGET(t *testing.T, ctx context.Context, url, token string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }
 
 func runMigrations(t *testing.T, databaseURL string) {

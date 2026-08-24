@@ -69,8 +69,22 @@ The source of truth is [`api/openapi.yaml`](api/openapi.yaml). Main endpoints:
 - `POST /v1/auth/link/{google|apple}`
 - `GET /v1/me`
 - `POST /v1/sync`
+- `GET /v1/admin/stats/overview`
+- `GET /v1/admin/stats/requests`
+- `GET /v1/admin/stats/errors`
 
 Access tokens are short-lived HMAC-signed JWTs. Refresh tokens are opaque, stored only as hashes, rotated on every use, and revoked as a family when reuse is detected.
+
+Admin statistics endpoints require an account with `user_role = admin`. There is no public role-management API. After migrations have been applied, create a new verified admin from a host with Docker access:
+
+```bash
+docker compose exec api /usr/local/bin/cubing-sync create-admin
+docker exec -it <api-container> /usr/local/bin/cubing-sync create-admin
+```
+
+The command prompts for an email, a password, and a password confirmation on a TTY. It does not accept credentials as flags or environment variables, does not create HTTP routes, and does not promote or modify an existing account. The new admin can sign in immediately with `POST /v1/auth/login`.
+
+Overview totals come from account and sync tables. Request and error series are hourly aggregates of completed HTTP traffic, excluding health checks and the statistics endpoints themselves. Query `from` and `to` as RFC3339 timestamps and `interval` as `hour` or `day`; the default window is the last 24 hours.
 
 See [`docs/sync-protocol.md`](docs/sync-protocol.md) for the client algorithm, retries, conflicts, and CubeTimer enum mapping.
 

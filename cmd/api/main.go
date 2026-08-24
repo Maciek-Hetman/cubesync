@@ -43,6 +43,10 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("migration_complete")
+	case "create-admin":
+		if err := runCreateAdmin(cfg, os.Args[2:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+			os.Exit(1)
+		}
 	case "healthcheck":
 		if err := healthcheck(cfg.HTTPAddress); err != nil {
 			logger.Error("healthcheck_failed", "error", err)

@@ -3,6 +3,11 @@ INSERT INTO users (id, email)
 VALUES ($1, $2)
 RETURNING *;
 
+-- name: CreateAdminUser :one
+INSERT INTO users (id, email, email_verified_at, user_role)
+VALUES ($1, $2, now(), 'admin')
+RETURNING *;
+
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
 
@@ -30,7 +35,7 @@ SET password_hash = $2, updated_at = now()
 WHERE user_id = $1;
 
 -- name: GetPasswordCredentialByEmail :one
-SELECT u.id, u.email, u.email_verified_at, p.password_hash
+SELECT u.id, u.email, u.email_verified_at, u.user_role, p.password_hash
 FROM users u
 JOIN password_credentials p ON p.user_id = u.id
 WHERE u.email = lower($1);

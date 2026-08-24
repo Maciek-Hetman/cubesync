@@ -16,6 +16,7 @@ type principalKey struct{}
 type principal struct {
 	UserID        uuid.UUID
 	EmailVerified bool
+	Role          string
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +188,7 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, principal{
-			UserID: userID, EmailVerified: claims.EmailVerified,
+			UserID: userID, EmailVerified: claims.EmailVerified, Role: claims.UserRole,
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

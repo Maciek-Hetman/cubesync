@@ -16,6 +16,9 @@ import (
 )
 
 const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+
 	verificationTokenTTL = 24 * time.Hour
 	passwordResetTTL     = time.Hour
 )
@@ -33,6 +36,7 @@ type User struct {
 	ID            uuid.UUID `json:"id"`
 	Email         string    `json:"email"`
 	EmailVerified bool      `json:"email_verified"`
+	UserRole      string    `json:"user_role"`
 }
 
 type Session struct {
@@ -162,7 +166,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 		return Session{}, authError("email_not_verified", "verify your email before signing in")
 	}
 	return s.issueSession(ctx, User{
-		ID: credential.ID, Email: credential.Email, EmailVerified: true,
+		ID: credential.ID, Email: credential.Email, EmailVerified: true, UserRole: credential.UserRole,
 	})
 }
 
@@ -313,7 +317,7 @@ func (s *Service) FederatedLogin(ctx context.Context, provider string, input Fed
 		return Session{}, err
 	}
 	session, err := s.issueSessionWithQueries(ctx, tq, User{
-		ID: userID, Email: identity.Email, EmailVerified: true,
+		ID: userID, Email: identity.Email, EmailVerified: true, UserRole: RoleUser,
 	}, uuid.New())
 	if err != nil {
 		return Session{}, err
@@ -350,6 +354,44 @@ func (s *Service) LinkFederated(ctx context.Context, userID uuid.UUID, provider 
 		return err
 	}
 	return nil
+}
+
+func (s *Service) CreateAdmin(ctx context.Context, email, password string) (User, error) {
+	email = normalizeEmail(email)
+	if !validEmail(email) {
+		return User{}, authError("invalid_email", "email address is invalid")
+	}
+	if err := validatePassword(password); err != nil {
+		return User{}, authError("invalid_password", err.Error())
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return User{}, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := storedb.New(tx)
+	userID := uuid.New()
+	row, err := q.CreateAdminUser(ctx, storedb.CreateAdminUserParams{ID: userID, Email: email})
+	if err != nil {
+		if isUniqueViolation(err) {
+			return User{}, authError("email_in_use", "an account already exists for this email")
+		}
+		return User{}, err
+	}
+	if err := q.CreatePasswordCredential(ctx, storedb.CreatePasswordCredentialParams{
+		UserID: userID, PasswordHash: passwordHash,
+	}); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+	return userFromDB(row), nil
 }
 
 func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password string) error {
@@ -445,7 +487,7 @@ func (s *Service) issueSessionWithQueries(
 	user User,
 	familyID uuid.UUID,
 ) (Session, error) {
-	access, _, err := s.tokens.IssueAccessToken(user.ID, user.EmailVerified)
+	access, _, err := s.tokens.IssueAccessToken(user.ID, user.EmailVerified, user.UserRole)
 	if err != nil {
 		return Session{}, err
 	}
@@ -466,7 +508,11 @@ func (s *Service) issueSessionWithQueries(
 }
 
 func userFromDB(row storedb.User) User {
-	return User{ID: row.ID, Email: row.Email, EmailVerified: row.EmailVerifiedAt != nil}
+	role := row.UserRole
+	if role == "" {
+		role = RoleUser
+	}
+	return User{ID: row.ID, Email: row.Email, EmailVerified: row.EmailVerifiedAt != nil, UserRole: role}
 }
 
 func normalizeEmail(value string) string {
