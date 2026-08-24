@@ -1,6 +1,6 @@
 module github.com/Maciek-Hetman/cubing-sync-backend
 
-go 1.25.7
+go 1.26.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
