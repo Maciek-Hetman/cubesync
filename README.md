@@ -28,6 +28,27 @@ The API listens on `http://127.0.0.1:43781` when `API_BIND=127.0.0.1`. Readiness
 curl http://127.0.0.1:43781/health/ready
 ```
 
+## Run the published GHCR image
+
+The release workflow publishes the API and migration image to GHCR. The `v0.1.0` release is available as `0.1.0` (and `latest`):
+
+```bash
+docker login ghcr.io
+cp .env.example .env
+export CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.1.0
+docker compose pull
+docker compose up -d --no-build
+```
+
+Check the service with:
+
+```bash
+docker compose ps
+curl http://127.0.0.1:43781/health/ready
+```
+
+Use a GitHub token with `read:packages` when the GHCR package is private. To use another published version, change `CUBESYNC_IMAGE` before running `docker compose pull`.
+
 For a local SMTP inbox:
 
 ```bash
