@@ -13,6 +13,7 @@ import (
 
 type Querier interface {
 	AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error
+	AcquireAdvisoryLockByID(ctx context.Context, dollar_1 int64) error
 	AppendChange(ctx context.Context, arg AppendChangeParams) (int64, error)
 	CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (User, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error

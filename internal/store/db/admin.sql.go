@@ -11,18 +11,36 @@ import (
 )
 
 const getOverviewStats = `-- name: GetOverviewStats :one
+WITH user_stats AS (
+    SELECT
+        COUNT(*)::bigint AS total_users,
+        COUNT(*) FILTER (WHERE email_verified_at IS NOT NULL)::bigint AS verified_users,
+        COUNT(*) FILTER (WHERE created_at >= now() - interval '24 hours')::bigint AS new_users_24h,
+        COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::bigint AS new_users_7d,
+        COUNT(*) FILTER (WHERE created_at >= now() - interval '30 days')::bigint AS new_users_30d
+    FROM users
+),
+active_stats AS (
+    SELECT
+        COUNT(DISTINCT user_id) FILTER (WHERE last_seen_at >= now() - interval '24 hours')::bigint AS active_users_24h,
+        COUNT(DISTINCT user_id) FILTER (WHERE last_seen_at >= now() - interval '7 days')::bigint AS active_users_7d,
+        COUNT(DISTINCT user_id) FILTER (WHERE last_seen_at >= now() - interval '30 days')::bigint AS active_users_30d,
+        COUNT(*)::bigint AS total_devices
+    FROM devices
+)
 SELECT
-    (SELECT COUNT(*)::bigint FROM users) AS total_users,
-    (SELECT COUNT(*)::bigint FROM users WHERE email_verified_at IS NOT NULL) AS verified_users,
-    (SELECT COUNT(*)::bigint FROM users WHERE created_at >= now() - interval '24 hours') AS new_users_24h,
-    (SELECT COUNT(*)::bigint FROM users WHERE created_at >= now() - interval '7 days') AS new_users_7d,
-    (SELECT COUNT(*)::bigint FROM users WHERE created_at >= now() - interval '30 days') AS new_users_30d,
-    (SELECT COUNT(DISTINCT user_id)::bigint FROM devices WHERE last_seen_at >= now() - interval '24 hours') AS active_users_24h,
-    (SELECT COUNT(DISTINCT user_id)::bigint FROM devices WHERE last_seen_at >= now() - interval '7 days') AS active_users_7d,
-    (SELECT COUNT(DISTINCT user_id)::bigint FROM devices WHERE last_seen_at >= now() - interval '30 days') AS active_users_30d,
-    (SELECT COUNT(*)::bigint FROM devices) AS total_devices,
+    u.total_users,
+    u.verified_users,
+    u.new_users_24h,
+    u.new_users_7d,
+    u.new_users_30d,
+    a.active_users_24h,
+    a.active_users_7d,
+    a.active_users_30d,
+    a.total_devices,
     (SELECT COUNT(*)::bigint FROM cube_sessions) AS total_sessions,
     (SELECT COUNT(*)::bigint FROM solves) AS total_solves
+FROM user_stats u, active_stats a
 `
 
 type GetOverviewStatsRow struct {

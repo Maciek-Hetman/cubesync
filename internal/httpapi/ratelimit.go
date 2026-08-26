@@ -10,10 +10,11 @@ import (
 )
 
 type ipRateLimiter struct {
-	mu       sync.Mutex
-	visitors map[string]*visitor
-	rate     rate.Limit
-	burst    int
+	mu        sync.Mutex
+	visitors  map[string]*visitor
+	rate      rate.Limit
+	burst     int
+	stopEvict chan struct{}
 }
 
 type visitor struct {
@@ -22,10 +23,33 @@ type visitor struct {
 }
 
 func newIPRateLimiter(eventsPerMinute, burst int) *ipRateLimiter {
-	return &ipRateLimiter{
-		visitors: make(map[string]*visitor),
-		rate:     rate.Every(time.Minute / time.Duration(eventsPerMinute)),
-		burst:    burst,
+	l := &ipRateLimiter{
+		visitors:  make(map[string]*visitor),
+		rate:      rate.Every(time.Minute / time.Duration(eventsPerMinute)),
+		burst:     burst,
+		stopEvict: make(chan struct{}),
+	}
+	go l.evictLoop()
+	return l
+}
+
+func (l *ipRateLimiter) evictLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			cutoff := time.Now().Add(-time.Hour)
+			for key, value := range l.visitors {
+				if value.lastSeen.Before(cutoff) {
+					delete(l.visitors, key)
+				}
+			}
+			l.mu.Unlock()
+		case <-l.stopEvict:
+			return
+		}
 	}
 }
 
@@ -43,14 +67,6 @@ func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 		}
 		entry.lastSeen = time.Now()
 		allowed := entry.limiter.Allow()
-		if len(l.visitors) > 10_000 {
-			cutoff := time.Now().Add(-time.Hour)
-			for key, value := range l.visitors {
-				if value.lastSeen.Before(cutoff) {
-					delete(l.visitors, key)
-				}
-			}
-		}
 		l.mu.Unlock()
 		if !allowed {
 			w.Header().Set("Retry-After", "60")

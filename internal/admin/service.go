@@ -18,9 +18,19 @@ const (
 	IntervalDay     = "day"
 )
 
+type metric struct {
+	method   string
+	route    string
+	status   int
+	duration time.Duration
+	at       time.Time
+}
+
 type Service struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
+	pool    *pgxpool.Pool
+	now     func() time.Time
+	metrics chan metric
+	done    chan struct{}
 }
 
 type Overview struct {
@@ -84,7 +94,85 @@ type Error struct {
 func (e Error) Error() string { return e.Message }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, now: time.Now}
+	s := &Service{
+		pool:    pool,
+		now:     time.Now,
+		metrics: make(chan metric, 4096),
+		done:    make(chan struct{}),
+	}
+	go s.flushLoop()
+	return s
+}
+
+func (s *Service) flushLoop() {
+	buffer := make([]metric, 0, 200)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case m, ok := <-s.metrics:
+			if !ok {
+				s.flush(buffer)
+				close(s.done)
+				return
+			}
+			buffer = append(buffer, m)
+			if len(buffer) >= 200 {
+				s.flush(buffer)
+				buffer = buffer[:0]
+			}
+		case <-ticker.C:
+			if len(buffer) > 0 {
+				s.flush(buffer)
+				buffer = buffer[:0]
+			}
+		}
+	}
+}
+
+func (s *Service) flush(buffer []metric) {
+	for _, m := range buffer {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		status := m.status
+		if status <= 0 {
+			status = 200
+		}
+		durationMS := m.duration.Milliseconds()
+		if durationMS < 0 {
+			durationMS = 0
+		}
+		_ = storedb.New(s.pool).RecordRequestStat(ctx, storedb.RecordRequestStatParams{
+			BucketHour:      m.at.UTC().Truncate(time.Hour),
+			Method:          m.method,
+			Route:           normalizeRoute(m.route),
+			StatusCode:      int32(status),
+			TotalDurationMs: durationMS,
+		})
+		cancel()
+	}
+}
+
+func (s *Service) RecordRequestAsync(method, route string, status int, duration time.Duration) {
+	if shouldSkipRoute(route) {
+		return
+	}
+	m := metric{
+		method:   method,
+		route:    route,
+		status:   status,
+		duration: duration,
+		at:       s.now(),
+	}
+	select {
+	case s.metrics <- m:
+	default:
+	}
+}
+
+func (s *Service) Shutdown() {
+	close(s.metrics)
+	<-s.done
 }
 
 func (s *Service) RecordRequest(ctx context.Context, method, route string, status int, duration time.Duration) error {

@@ -146,11 +146,7 @@ func (h *Handler) accessLog(next http.Handler) http.Handler {
 		if rc := chi.RouteContext(r.Context()); rc != nil {
 			route = rc.RoutePattern()
 		}
-		metricCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := h.admin.RecordRequest(metricCtx, r.Method, route, status, duration); err != nil {
-			h.logger.Error("request_metric_failed", "error", err)
-		}
+		h.admin.RecordRequestAsync(r.Method, route, status, duration)
 	})
 }
 

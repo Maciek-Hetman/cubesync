@@ -22,6 +22,15 @@ func (q *Queries) AcquireAdvisoryLock(ctx context.Context, hashtextextended stri
 	return err
 }
 
+const acquireAdvisoryLockByID = `-- name: AcquireAdvisoryLockByID :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+func (q *Queries) AcquireAdvisoryLockByID(ctx context.Context, dollar_1 int64) error {
+	_, err := q.db.Exec(ctx, acquireAdvisoryLockByID, dollar_1)
+	return err
+}
+
 const appendChange = `-- name: AppendChange :one
 INSERT INTO change_log (
     user_id, entity_type, entity_id, operation, version, payload

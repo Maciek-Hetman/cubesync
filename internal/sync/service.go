@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 
 	storedb "github.com/Maciek-Hetman/cubing-sync-backend/internal/store/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -53,6 +55,10 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	limit := req.Limit
 	if limit <= 0 || limit > s.defaultMaxChange {
 		limit = s.defaultMaxChange
+	}
+
+	if len(req.Mutations) == 0 {
+		return s.pullOnly(ctx, userID, req, limit)
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -119,6 +125,37 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	return Response{Outcomes: outcomes, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
+func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, limit int) (Response, error) {
+	q := storedb.New(s.pool)
+
+	if err := q.UpsertDevice(ctx, storedb.UpsertDeviceParams{
+		ID: req.Device.ID, UserID: userID, Name: req.Device.Name, Platform: req.Device.Platform,
+	}); err != nil {
+		return Response{}, err
+	}
+
+	rows, err := q.ListChanges(ctx, storedb.ListChangesParams{
+		UserID: userID, ChangeID: req.Cursor, Limit: int32(limit + 1),
+	})
+	if err != nil {
+		return Response{}, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	changes := make([]Change, 0, len(rows))
+	nextCursor := req.Cursor
+	for _, row := range rows {
+		changes = append(changes, Change{
+			Cursor: row.ChangeID, Entity: row.EntityType, EntityID: row.EntityID,
+			Operation: row.Operation, Version: row.Version, Data: row.Payload, ChangedAt: row.CreatedAt,
+		})
+		nextCursor = row.ChangeID
+	}
+	return Response{Outcomes: []MutationOutcome{}, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
+}
+
 func (s *Service) applyMutation(
 	ctx context.Context,
 	q *storedb.Queries,
@@ -126,7 +163,7 @@ func (s *Service) applyMutation(
 	m Mutation,
 ) (MutationOutcome, error) {
 	if m.ID != uuid.Nil {
-		if err := q.AcquireAdvisoryLock(ctx, userID.String()+":"+deviceID.String()+":mutation:"+m.ID.String()); err != nil {
+		if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), deviceID.String(), "mutation", m.ID.String())); err != nil {
 			return MutationOutcome{}, err
 		}
 		raw, err := q.GetProcessedMutation(ctx, storedb.GetProcessedMutationParams{
@@ -175,7 +212,7 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
 	}
-	if err := q.AcquireAdvisoryLock(ctx, userID.String()+":session:"+m.EntityID.String()); err != nil {
+	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "session", m.EntityID.String())); err != nil {
 		return internal(m.ID, err)
 	}
 	current, currentErr := q.GetSessionForUpdate(ctx, storedb.GetSessionForUpdateParams{UserID: userID, ID: m.EntityID})
@@ -242,7 +279,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
 	}
-	if err := q.AcquireAdvisoryLock(ctx, userID.String()+":solve:"+m.EntityID.String()); err != nil {
+	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "solve", m.EntityID.String())); err != nil {
 		return internal(m.ID, err)
 	}
 	current, currentErr := q.GetSolveForUpdate(ctx, storedb.GetSolveForUpdateParams{UserID: userID, ID: m.EntityID})
@@ -278,12 +315,6 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	}
 	sessionID := uuid.NullUUID{}
 	if input.SessionID != nil {
-		if _, err := q.GetLiveSession(ctx, storedb.GetLiveSessionParams{UserID: userID, ID: *input.SessionID}); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return rejected(m.ID, "invalid_session", "referenced session does not exist")
-			}
-			return internal(m.ID, err)
-		}
 		sessionID = uuid.NullUUID{UUID: *input.SessionID, Valid: true}
 	}
 
@@ -308,6 +339,9 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		})
 	}
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return rejected(m.ID, "invalid_session", "referenced session does not exist")
+		}
 		return internal(m.ID, err)
 	}
 	if err := appendSolveChange(ctx, q, userID, "upsert", result); err != nil {
@@ -454,6 +488,19 @@ func rejected(id uuid.UUID, code, message string) MutationOutcome {
 
 func internal(id uuid.UUID, err error) MutationOutcome {
 	return MutationOutcome{MutationID: id, Status: "internal_error", Message: err.Error()}
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+func advisoryLockKey(parts ...string) int64 {
+	h := fnv.New64a()
+	for _, p := range parts {
+		h.Write([]byte(p))
+	}
+	return int64(h.Sum64())
 }
 
 type ClientError struct {
