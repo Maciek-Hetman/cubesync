@@ -70,7 +70,7 @@ func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 		l.mu.Unlock()
 		if !allowed {
 			w.Header().Set("Retry-After", "60")
-			writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
+			writeJSON(w, http.StatusTooManyRequests, errorBody{Error: errorDetail{Code: "rate_limited", Message: "too many requests"}})
 			return
 		}
 		next.ServeHTTP(w, r)

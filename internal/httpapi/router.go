@@ -88,7 +88,7 @@ func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.config.ReadinessTimeout)
 	defer cancel()
 	if err := h.db.Ping(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "not_ready", "database is unavailable")
+		h.writeError(w, r, http.StatusServiceUnavailable, "not_ready", "database is unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -159,7 +159,15 @@ type errorDetail struct {
 	Message string `json:"message"`
 }
 
-func writeError(w http.ResponseWriter, status int, code, message string) {
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if h != nil && h.admin != nil && r != nil {
+		userID := principalFromContext(r.Context()).UserID
+		route := ""
+		if rc := chi.RouteContext(r.Context()); rc != nil {
+			route = rc.RoutePattern()
+		}
+		h.admin.RecordErrorAsync(userID, r.Method, route, status, code, message)
+	}
 	writeJSON(w, status, errorBody{Error: errorDetail{Code: code, Message: message}})
 }
 
@@ -169,12 +177,12 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+func (h *Handler) decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body is invalid")
+		h.writeError(w, r, http.StatusBadRequest, "invalid_json", "request body is invalid")
 		return false
 	}
 	return true

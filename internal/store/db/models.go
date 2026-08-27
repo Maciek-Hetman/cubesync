@@ -89,6 +89,17 @@ type RefreshToken struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+type RequestError struct {
+	ID         int64         `json:"id"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UserID     uuid.NullUUID `json:"user_id"`
+	Method     string        `json:"method"`
+	Route      string        `json:"route"`
+	StatusCode int32         `json:"status_code"`
+	Code       string        `json:"code"`
+	Message    string        `json:"message"`
+}
+
 type RequestStatsHourly struct {
 	BucketHour      time.Time `json:"bucket_hour"`
 	Method          string    `json:"method"`

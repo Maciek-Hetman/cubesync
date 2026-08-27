@@ -13,77 +13,85 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 	overview, err := h.admin.Overview(r.Context())
 	if err != nil {
 		h.logger.Error("admin_overview_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "request could not be completed")
+		h.writeError(w, r, http.StatusInternalServerError, "internal_error", "request could not be completed")
 		return
 	}
 	writeJSON(w, http.StatusOK, overview)
 }
 
 func (h *Handler) adminRequestStats(w http.ResponseWriter, r *http.Request) {
-	query, ok := parseStatsRange(w, r)
+	query, ok := h.parseStatsRange(w, r)
 	if !ok {
 		return
 	}
 	series, err := h.admin.RequestStats(r.Context(), query)
 	if err != nil {
-		h.writeAdminError(w, err)
+		h.writeAdminError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, series)
 }
 
 func (h *Handler) adminErrorStats(w http.ResponseWriter, r *http.Request) {
-	query, ok := parseStatsRange(w, r)
-	if !ok {
-		return
+	beforeStr := r.URL.Query().Get("before")
+	var before time.Time
+	if beforeStr != "" {
+		var err error
+		before, err = time.Parse(time.RFC3339, beforeStr)
+		if err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid_cursor", "before must be an RFC3339 timestamp")
+			return
+		}
 	}
-	series, err := h.admin.ErrorStats(r.Context(), query)
+	limit := 50
+
+	resp, err := h.admin.ListErrors(r.Context(), before, limit)
 	if err != nil {
-		h.writeAdminError(w, err)
+		h.writeAdminError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, series)
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func parseStatsRange(w http.ResponseWriter, r *http.Request) (admin.QueryRange, bool) {
+func (h *Handler) parseStatsRange(w http.ResponseWriter, r *http.Request) (admin.QueryRange, bool) {
 	query := r.URL.Query()
-	from, ok := parseOptionalTime(w, query.Get("from"), "from")
+	from, ok := h.parseOptionalTime(w, r, query.Get("from"), "from")
 	if !ok {
 		return admin.QueryRange{}, false
 	}
-	to, ok := parseOptionalTime(w, query.Get("to"), "to")
+	to, ok := h.parseOptionalTime(w, r, query.Get("to"), "to")
 	if !ok {
 		return admin.QueryRange{}, false
 	}
 	return admin.QueryRange{From: from, To: to, Interval: query.Get("interval")}, true
 }
 
-func parseOptionalTime(w http.ResponseWriter, value, name string) (time.Time, bool) {
+func (h *Handler) parseOptionalTime(w http.ResponseWriter, r *http.Request, value, name string) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, true
 	}
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_range", name+" must be an RFC3339 timestamp")
+		h.writeError(w, r, http.StatusBadRequest, "invalid_range", name+" must be an RFC3339 timestamp")
 		return time.Time{}, false
 	}
 	return parsed, true
 }
 
-func (h *Handler) writeAdminError(w http.ResponseWriter, err error) {
+func (h *Handler) writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	var adminErr admin.Error
 	if errors.As(err, &adminErr) {
-		writeError(w, http.StatusBadRequest, adminErr.Code, adminErr.Message)
+		h.writeError(w, r, http.StatusBadRequest, adminErr.Code, adminErr.Message)
 		return
 	}
 	h.logger.Error("admin_stats_failed", "error", err)
-	writeError(w, http.StatusInternalServerError, "internal_error", "request could not be completed")
+	h.writeError(w, r, http.StatusInternalServerError, "internal_error", "request could not be completed")
 }
 
 func (h *Handler) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if principalFromContext(r.Context()).Role != auth.RoleAdmin {
-			writeError(w, http.StatusForbidden, "forbidden", "admin access is required")
+			h.writeError(w, r, http.StatusForbidden, "forbidden", "admin access is required")
 			return
 		}
 		next.ServeHTTP(w, r)

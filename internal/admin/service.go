@@ -7,6 +7,7 @@ import (
 	"time"
 
 	storedb "github.com/Maciek-Hetman/cubing-sync-backend/internal/store/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -65,19 +66,20 @@ type RequestSeries struct {
 	Points   []RequestSeriesPoint `json:"points"`
 }
 
-type ErrorSeriesPoint struct {
-	Bucket       time.Time `json:"bucket"`
-	Method       string    `json:"method"`
-	Route        string    `json:"route"`
-	StatusCode   int       `json:"status_code"`
-	RequestCount int64     `json:"request_count"`
+type ErrorLog struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UserID    *string   `json:"user_id,omitempty"`
+	Method    string    `json:"method"`
+	Route     string    `json:"route"`
+	Status    int       `json:"status"`
+	Code      string    `json:"code"`
+	Message   string    `json:"message"`
 }
 
-type ErrorSeries struct {
-	From     time.Time          `json:"from"`
-	To       time.Time          `json:"to"`
-	Interval string             `json:"interval"`
-	Points   []ErrorSeriesPoint `json:"points"`
+type ErrorLogResponse struct {
+	Errors     []ErrorLog `json:"errors"`
+	NextCursor *time.Time `json:"next_cursor"`
 }
 
 type QueryRange struct {
@@ -108,6 +110,8 @@ func (s *Service) flushLoop() {
 	buffer := make([]metric, 0, 200)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
@@ -127,6 +131,10 @@ func (s *Service) flushLoop() {
 				s.flush(buffer)
 				buffer = buffer[:0]
 			}
+		case <-cleanupTicker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = storedb.New(s.pool).DeleteOldErrors(ctx)
+			cancel()
 		}
 	}
 }
@@ -253,35 +261,75 @@ func (s *Service) RequestStats(ctx context.Context, query QueryRange) (RequestSe
 	}, nil
 }
 
-func (s *Service) ErrorStats(ctx context.Context, query QueryRange) (ErrorSeries, error) {
-	resolved, err := resolveRange(s.now().UTC(), query)
-	if err != nil {
-		return ErrorSeries{}, err
+func (s *Service) ListErrors(ctx context.Context, before time.Time, limit int) (ErrorLogResponse, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
 	}
-	rows, err := storedb.New(s.pool).ListErrorStats(ctx, storedb.ListErrorStatsParams{
-		Interval: resolved.Interval,
-		FromTime: resolved.From,
-		ToTime:   resolved.To,
+	if before.IsZero() {
+		before = s.now().UTC()
+	}
+
+	rows, err := storedb.New(s.pool).ListIndividualErrors(ctx, storedb.ListIndividualErrorsParams{
+		Before:   before,
+		LimitVal: int32(limit),
 	})
 	if err != nil {
-		return ErrorSeries{}, err
+		return ErrorLogResponse{}, err
 	}
-	points := make([]ErrorSeriesPoint, 0, len(rows))
+
+	var errors []ErrorLog
 	for _, row := range rows {
-		points = append(points, ErrorSeriesPoint{
-			Bucket:       row.Bucket,
-			Method:       row.Method,
-			Route:        row.Route,
-			StatusCode:   int(row.StatusCode),
-			RequestCount: row.RequestCount,
+		var userID *string
+		if row.UserID.Valid {
+			idStr := row.UserID.UUID.String()
+			userID = &idStr
+		}
+		errors = append(errors, ErrorLog{
+			ID:        row.ID,
+			CreatedAt: row.CreatedAt,
+			UserID:    userID,
+			Method:    row.Method,
+			Route:     row.Route,
+			Status:    int(row.StatusCode),
+			Code:      row.Code,
+			Message:   row.Message,
 		})
 	}
-	return ErrorSeries{
-		From:     resolved.From,
-		To:       resolved.To,
-		Interval: resolved.Interval,
-		Points:   points,
+
+	var nextCursor *time.Time
+	if len(errors) == limit {
+		lastTime := errors[len(errors)-1].CreatedAt
+		nextCursor = &lastTime
+	}
+
+	return ErrorLogResponse{
+		Errors:     errors,
+		NextCursor: nextCursor,
 	}, nil
+}
+
+func (s *Service) RecordErrorAsync(userID uuid.UUID, method, route string, status int, code, message string) {
+	if shouldSkipRoute(route) {
+		return
+	}
+
+	var pgUserID uuid.NullUUID
+	if userID != uuid.Nil {
+		pgUserID = uuid.NullUUID{UUID: userID, Valid: true}
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = storedb.New(s.pool).RecordRequestError(ctx, storedb.RecordRequestErrorParams{
+			UserID:     pgUserID,
+			Method:     method,
+			Route:      normalizeRoute(route),
+			StatusCode: int32(status),
+			Code:       code,
+			Message:    message,
+		})
+	}()
 }
 
 func resolveRange(now time.Time, query QueryRange) (QueryRange, error) {

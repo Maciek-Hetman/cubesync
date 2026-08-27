@@ -21,6 +21,7 @@ type Querier interface {
 	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) error
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteOldErrors(ctx context.Context) error
 	DeleteSession(ctx context.Context, arg DeleteSessionParams) (CubeSession, error)
 	DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf, error)
 	GetIdentityForUserProvider(ctx context.Context, arg GetIdentityForUserProviderParams) (Identity, error)
@@ -41,10 +42,12 @@ type Querier interface {
 	LatestChangeCursor(ctx context.Context, userID uuid.UUID) (int64, error)
 	ListChanges(ctx context.Context, arg ListChangesParams) ([]ChangeLog, error)
 	ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error)
+	ListIndividualErrors(ctx context.Context, arg ListIndividualErrorsParams) ([]RequestError, error)
 	ListRequestStats(ctx context.Context, arg ListRequestStatsParams) ([]ListRequestStatsRow, error)
 	MarkOneTimeTokenUsed(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	RecordProcessedMutation(ctx context.Context, arg RecordProcessedMutationParams) error
+	RecordRequestError(ctx context.Context, arg RecordRequestErrorParams) error
 	RecordRequestStat(ctx context.Context, arg RecordRequestStatParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error

@@ -75,3 +75,22 @@ WHERE bucket_hour >= sqlc.arg(from_time)
   AND status_code >= 400
 GROUP BY 1, method, route, status_code
 ORDER BY 1, request_count DESC, method, route, status_code;
+
+-- name: RecordRequestError :exec
+INSERT INTO request_errors (
+    user_id, method, route, status_code, code, message
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+);
+
+-- name: ListIndividualErrors :many
+SELECT
+    id, created_at, user_id, method, route, status_code, code, message
+FROM request_errors
+WHERE created_at < sqlc.arg(before)
+ORDER BY created_at DESC
+LIMIT sqlc.arg(limit_val);
+
+-- name: DeleteOldErrors :exec
+DELETE FROM request_errors
+WHERE created_at < now() - interval '30 days';
