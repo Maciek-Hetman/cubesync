@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -123,7 +124,11 @@ func migrate(databaseURL string) error {
 
 func healthcheck(address string) error {
 	client := http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get("http://127.0.0.1" + address + "/health/ready")
+	port := address
+	if idx := strings.LastIndex(address, ":"); idx != -1 {
+		port = address[idx:]
+	}
+	response, err := client.Get("http://127.0.0.1" + port + "/health/ready")
 	if err != nil {
 		return err
 	}

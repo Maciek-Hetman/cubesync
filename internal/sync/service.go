@@ -83,7 +83,15 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 			}
 			return 1
 		}
-		return strings.Compare(a.EntityID.String(), b.EntityID.String())
+		for i := 0; i < 16; i++ {
+			if a.EntityID[i] != b.EntityID[i] {
+				if a.EntityID[i] < b.EntityID[i] {
+					return -1
+				}
+				return 1
+			}
+		}
+		return 0
 	})
 
 	for _, mutation := range ordered {
@@ -487,7 +495,7 @@ func rejected(id uuid.UUID, code, message string) MutationOutcome {
 }
 
 func internal(id uuid.UUID, err error) MutationOutcome {
-	return MutationOutcome{MutationID: id, Status: "internal_error", Message: err.Error()}
+	return MutationOutcome{MutationID: id, Status: "internal_error", Message: "internal server error"}
 }
 
 func isForeignKeyViolation(err error) bool {
@@ -499,6 +507,7 @@ func advisoryLockKey(parts ...string) int64 {
 	h := fnv.New64a()
 	for _, p := range parts {
 		h.Write([]byte(p))
+		h.Write([]byte{0})
 	}
 	return int64(h.Sum64())
 }
