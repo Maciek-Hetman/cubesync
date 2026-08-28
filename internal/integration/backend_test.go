@@ -147,7 +147,7 @@ func TestBackendIntegration(t *testing.T) {
 }
 
 func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) {
-	service := syncservice.NewService(pool, 100, 100)
+	service := syncservice.NewService(pool, 100, 100, 512*1024)
 	deviceA := syncservice.Device{ID: uuid.New(), Name: "Android", Platform: "android"}
 	deviceB := syncservice.Device{ID: uuid.New(), Name: "Mac", Platform: "macos"}
 	sessionID := uuid.New()
@@ -166,7 +166,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "upsert", Data: sessionData},
 			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "upsert", Data: solveData},
 		},
-	})
+	}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		t.Fatalf("unexpected initial sync: %+v", initial)
 	}
 
-	pulled, err := service.Sync(ctx, userID, syncservice.Request{Device: deviceB})
+	pulled, err := service.Sync(ctx, userID, syncservice.Request{Device: deviceB}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		Mutations: []syncservice.Mutation{{
 			ID: mutationID, Entity: "solve", EntityID: solveID, Operation: "upsert", BaseVersion: 1, Data: updateA,
 		}},
-	})
+	}, 1)
 	if err != nil || updated.Outcomes[0].Version != 2 {
 		t.Fatalf("update failed: response=%+v error=%v", updated, err)
 	}
@@ -201,7 +201,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		Mutations: []syncservice.Mutation{{
 			ID: mutationID, Entity: "solve", EntityID: solveID, Operation: "upsert", BaseVersion: 1, Data: updateA,
 		}},
-	})
+	}, 1)
 	if err != nil || retried.Outcomes[0].Status != "accepted" || len(retried.Changes) != 0 {
 		t.Fatalf("idempotent retry failed: response=%+v error=%v", retried, err)
 	}
@@ -215,7 +215,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		Mutations: []syncservice.Mutation{{
 			ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "upsert", BaseVersion: 1, Data: updateB,
 		}},
-	})
+	}, 1)
 	if err != nil || conflicted.Outcomes[0].Status != "conflict" || conflicted.Outcomes[0].Version != 2 {
 		t.Fatalf("expected version conflict: response=%+v error=%v", conflicted, err)
 	}
@@ -225,7 +225,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		Mutations: []syncservice.Mutation{{
 			ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "delete", BaseVersion: 2,
 		}},
-	})
+	}, 1)
 	if err != nil || deleted.Outcomes[0].Version != 3 || len(deleted.Changes) != 1 || deleted.Changes[0].Operation != "delete" {
 		t.Fatalf("delete tombstone failed: response=%+v error=%v", deleted, err)
 	}
@@ -234,7 +234,7 @@ func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	if _, err := pool.Exec(ctx, "INSERT INTO users (id, email, email_verified_at) VALUES ($1, $2, now())", otherUser, "other@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	isolated, err := service.Sync(ctx, otherUser, syncservice.Request{Device: syncservice.Device{ID: uuid.New()}})
+	isolated, err := service.Sync(ctx, otherUser, syncservice.Request{Device: syncservice.Device{ID: uuid.New()}}, 1)
 	if err != nil || len(isolated.Changes) != 0 {
 		t.Fatalf("cross-user change leak: response=%+v error=%v", isolated, err)
 	}
@@ -440,21 +440,21 @@ func testAdminStatistics(
 	if errorsResp.StatusCode != http.StatusOK {
 		t.Fatalf("admin error stats returned %d", errorsResp.StatusCode)
 	}
-	var errors admin.ErrorSeries
-	if err := json.NewDecoder(errorsResp.Body).Decode(&errors); err != nil {
+	var logs admin.ErrorLogResponse
+	if err := json.NewDecoder(errorsResp.Body).Decode(&logs); err != nil {
 		t.Fatal(err)
 	}
 	foundLogin400 := false
-	for _, point := range errors.Points {
-		if point.Method == http.MethodPost && point.Route == "/v1/auth/login" && point.StatusCode == http.StatusBadRequest && point.RequestCount >= 1 {
+	for _, log := range logs.Errors {
+		if log.Method == http.MethodPost && log.Route == "/v1/auth/login" && log.Status == http.StatusBadRequest {
 			foundLogin400 = true
 		}
-		if point.Route == "/health/live" || strings.HasPrefix(point.Route, "/v1/admin/stats") {
-			t.Fatalf("internal route leaked into error stats: %+v", point)
+		if log.Route == "/health/live" || strings.HasPrefix(log.Route, "/v1/admin/stats") {
+			t.Fatalf("internal route leaked into error stats: %+v", log)
 		}
 	}
 	if !foundLogin400 {
-		t.Fatalf("expected login 400 breakdown: %+v", errors)
+		t.Fatalf("expected login 400 breakdown: %+v", logs)
 	}
 }
 

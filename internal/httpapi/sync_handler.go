@@ -39,4 +39,3 @@ func (h *Handler) synchronize(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-

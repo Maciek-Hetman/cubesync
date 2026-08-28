@@ -85,7 +85,6 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	retentionSvc := syncservice.NewRetentionService(pool, cfg.InactiveDeviceWindow, cfg.RetentionRunInterval)
 	defer retentionSvc.Shutdown()
 
-
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
 		Handler:           httpapi.NewRouter(cfg, pool, logger),

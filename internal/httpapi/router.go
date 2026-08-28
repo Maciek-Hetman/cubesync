@@ -18,12 +18,12 @@ import (
 )
 
 type Handler struct {
-	config  config.Config
-	db      *pgxpool.Pool
-	logger  *slog.Logger
-	auth    *auth.Service
-	sync    *syncservice.Service
-	admin   *admin.Service
+	config    config.Config
+	db        *pgxpool.Pool
+	logger    *slog.Logger
+	auth      *auth.Service
+	sync      *syncservice.Service
+	admin     *admin.Service
 	snapshot_ *syncservice.SnapshotService
 	stats_    *syncservice.StatsService
 }
@@ -93,8 +93,6 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 
 	return r
 }
-
-
 
 func (h *Handler) live(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

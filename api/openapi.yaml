@@ -887,6 +887,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Session"
             - $ref: "#/components/schemas/Solve"
+            - $ref: "#/components/schemas/ConflictStub"
     Change:
       type: object
       required: [cursor, entity, entity_id, operation, version, data, changed_at]
@@ -910,6 +911,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Session"
             - $ref: "#/components/schemas/Solve"
+            - $ref: "#/components/schemas/DeleteStub"
         changed_at:
           type: string
           format: date-time
@@ -956,12 +958,21 @@ components:
         device:
           $ref: "#/components/schemas/Device"
         cursor:
+          type: integer
+          format: int64
+          description: Change-log watermark. 0 on the first page; echo the response cursor on subsequent pages.
+        after_id:
           type: string
-        limit:
+          format: uuid
+          description: Keyset position for the current entity. Zero UUID for the first page of each entity.
+        entity:
+          type: string
+          enum: [session, solve]
+        page_size:
           type: integer
     SnapshotResponse:
       type: object
-      required: [sessions, solves, next_cursor, has_more, sync_cursor]
+      required: [cursor, has_more]
       properties:
         sessions:
           type: array
@@ -971,34 +982,84 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Solve"
-        next_cursor:
-          type: string
-        has_more:
-          type: boolean
-        sync_cursor:
+        cursor:
           type: integer
           format: int64
+          description: Stable change-log watermark to use as the initial sync cursor once bootstrap completes.
+        has_more:
+          type: boolean
+        next_entity:
+          type: string
+          enum: [session, solve]
+        next_after_id:
+          type: string
+          format: uuid
     StatsResponse:
       type: object
+      required: [total_count, counted_count, dnf_count, min_ms, max_ms, mean_ms, stddev_ms, total_ms]
       properties:
-        total_solves:
+        total_count:
           type: integer
-        counted_solves:
+          format: int64
+        counted_count:
           type: integer
-        dnf_solves:
+          format: int64
+        dnf_count:
           type: integer
-        best_solve_ms:
+          format: int64
+        min_ms:
           type: integer
-        mean_solve_ms:
+          format: int64
+        max_ms:
           type: integer
-        current_ao5_ms:
+          format: int64
+        mean_ms:
+          type: number
+          format: double
+        stddev_ms:
+          type: number
+          format: double
+        total_ms:
           type: integer
-        best_ao5_ms:
+          format: int64
+        ao5:
           type: integer
-        current_ao12_ms:
+          format: int64
+        ao12:
           type: integer
-        best_ao12_ms:
+          format: int64
+        ao50:
           type: integer
+          format: int64
+        ao100:
+          type: integer
+          format: int64
+    DeleteStub:
+      type: object
+      required: [id, version, deleted_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          format: int64
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+    ConflictStub:
+      type: object
+      required: [id, version, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          format: int64
+        updated_at:
+          type: string
+          format: date-time
     SessionSummary:
       type: object
       properties:

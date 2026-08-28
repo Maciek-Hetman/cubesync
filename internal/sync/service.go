@@ -40,7 +40,6 @@ func NewService(pool *pgxpool.Pool, maxMutations, defaultMaxChange, maxResponseB
 	}
 }
 
-
 func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, protoVersion int) (Response, error) {
 	if req.Cursor < 0 {
 		return Response{}, clientError("invalid_cursor", "cursor cannot be negative")
@@ -152,14 +151,17 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 		return Response{}, err
 	}
 
-	// Update device's acknowledged cursor asynchronously — non-critical.
-	if nextCursor > req.Cursor {
+	// Acknowledge the cursor the client reports as durably applied. The client
+	// only advances its cursor after every returned change commits locally, so
+	// req.Cursor is the safe pruning position (the position the server just
+	// returned has not necessarily been applied yet).
+	if req.Cursor > 0 {
 		go func() {
 			qAck := storedb.New(s.pool)
 			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
-				UserID: userID, ID: req.Device.ID, LastAckCursor: nextCursor,
+				UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
 			})
 		}()
 	}
@@ -191,13 +193,13 @@ func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, l
 		changes, hasMore, nextCursor = s.applyByteLimit(changes, rows, req.Cursor, hasMore)
 	}
 
-	if nextCursor > req.Cursor {
+	if req.Cursor > 0 {
 		go func() {
 			qAck := storedb.New(s.pool)
 			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
-				UserID: userID, ID: req.Device.ID, LastAckCursor: nextCursor,
+				UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
 			})
 		}()
 	}
@@ -213,8 +215,16 @@ func (s *Service) buildChanges(rows []storedb.ChangeLog, baseCursor int64, proto
 	for _, row := range rows {
 		data := row.Payload
 		if protoVersion >= 2 && row.Operation == "delete" {
-			// Slim delete payload: only id, version, deleted_at.
-			stub := DeleteStub{ID: row.EntityID, Version: row.Version}
+			// Slim delete payload: only id, version, deleted_at. The stored
+			// payload still contains the full tombstoned entity; carry its
+			// deleted_at through so clients can mark records tombstoned.
+			var payload struct {
+				DeletedAt *time.Time `json:"deleted_at"`
+			}
+			if err := json.Unmarshal(row.Payload, &payload); err != nil {
+				payload.DeletedAt = nil
+			}
+			stub := DeleteStub{ID: row.EntityID, Version: row.Version, DeletedAt: payload.DeletedAt}
 			if b, err := json.Marshal(stub); err == nil {
 				data = b
 			}
@@ -236,8 +246,9 @@ func (s *Service) applyByteLimit(changes []Change, rows []storedb.ChangeLog, bas
 	nextCursor := baseCursor
 	for i, ch := range changes {
 		total += len(ch.Data) + changeEnvelopeOverhead
-		if total > s.maxResponseBytes {
-			// Stop before this change.
+		if total > s.maxResponseBytes && i > 0 {
+			// Stop before this change, but always include at least one so the
+			// client can make progress (avoids an empty page loop).
 			return changes[:i], true, nextCursor
 		}
 		if i < len(rows) {
@@ -246,8 +257,6 @@ func (s *Service) applyByteLimit(changes []Change, rows []storedb.ChangeLog, bas
 	}
 	return changes, hasMore, nextCursor
 }
-
-
 
 func (s *Service) applyMutation(
 	ctx context.Context,
@@ -301,7 +310,6 @@ func (s *Service) applyMutation(
 	}
 	return outcome, nil
 }
-
 
 func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
@@ -369,7 +377,6 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 	}
 	return accepted(m.ID, result.Version)
 }
-
 
 func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
@@ -445,7 +452,6 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	}
 	return accepted(m.ID, result.Version)
 }
-
 
 func validateMutationEnvelope(m Mutation) *MutationOutcome {
 	if m.ID == uuid.Nil {

@@ -73,6 +73,7 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, syncservice.PaginatedSessionsResponse{
 		Sessions:   summaries,
 		NextCursor: nextCursor,
+		HasMore:    hasMore,
 	})
 }
 
@@ -122,16 +123,16 @@ func (h *Handler) listSessionSolves(w http.ResponseWriter, r *http.Request) {
 			sid = &v
 		}
 		solve := syncservice.Solve{
-			ID:        row.ID,
-			SessionID: sid,
+			ID:         row.ID,
+			SessionID:  sid,
 			DurationMS: row.DurationMs,
-			Penalty:   row.Penalty,
-			SolvedAt:  row.SolvedAt,
-			Scramble:  row.Scramble,
-			Event:     row.Event,
-			Version:   row.Version,
-			UpdatedAt: row.UpdatedAt,
-			DeletedAt: row.DeletedAt,
+			Penalty:    row.Penalty,
+			SolvedAt:   row.SolvedAt,
+			Scramble:   row.Scramble,
+			Event:      row.Event,
+			Version:    row.Version,
+			UpdatedAt:  row.UpdatedAt,
+			DeletedAt:  row.DeletedAt,
 		}
 		solves = append(solves, solve)
 		nextCursor = encodeCursor(row.SolvedAt, row.ID)
@@ -144,6 +145,7 @@ func (h *Handler) listSessionSolves(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, syncservice.PaginatedSolvesResponse{
 		Solves:     solves,
 		NextCursor: nextCursor,
+		HasMore:    hasMore,
 	})
 }
 

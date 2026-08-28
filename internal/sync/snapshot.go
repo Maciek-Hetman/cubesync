@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 
 	storedb "github.com/Maciek-Hetman/cubing-sync-backend/internal/store/db"
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ const (
 
 // SnapshotService handles the bootstrap snapshot endpoint.
 type SnapshotService struct {
-	pool            *pgxpool.Pool
+	pool             *pgxpool.Pool
 	maxResponseBytes int
 }
 
@@ -30,12 +31,14 @@ func NewSnapshotService(pool *pgxpool.Pool, maxResponseBytes int) *SnapshotServi
 // Snapshot returns a page of materialized entity state for a new or full-resyncing device.
 //
 // Protocol:
-//  1. Client sends {entity: "session", after_id: zero-uuid} for first page.
+//  1. Client sends {entity: "session", after_id: zero-uuid} for the first page.
 //  2. When has_more is true for sessions, repeat with next_after_id.
 //  3. When sessions are exhausted, next_entity is "solve" — client repeats from zero.
 //  4. When has_more is false and next_entity is empty, bootstrap is complete.
-//  5. The returned cursor is the change_log position at the start of the first session page.
-//     Client uses it as the starting cursor for incremental sync after bootstrap.
+//  5. The returned cursor is the change_log watermark at the start of bootstrap.
+//     The client echoes it back on every page and uses it as the starting cursor
+//     for incremental sync once bootstrap completes, so changes that land while
+//     the snapshot is being streamed are caught by /v1/sync.
 func (s *SnapshotService) Snapshot(ctx context.Context, userID uuid.UUID, req SnapshotRequest) (SnapshotResponse, error) {
 	if req.Device.ID == uuid.Nil {
 		return SnapshotResponse{}, clientError("invalid_device", "device.id is required")
@@ -61,11 +64,15 @@ func (s *SnapshotService) Snapshot(ctx context.Context, userID uuid.UUID, req Sn
 		return SnapshotResponse{}, err
 	}
 
-	// Take a cursor snapshot at the start; returned on every page so the client
-	// always has a stable cursor to hand to /v1/sync once bootstrap completes.
-	snapshotCursor, err := q.LatestChangeCursor(ctx, userID)
-	if err != nil {
-		return SnapshotResponse{}, err
+	// Use the client-supplied watermark when present so the cursor stays stable
+	// across pages. Compute it once on the first page otherwise.
+	snapshotCursor := req.Cursor
+	if snapshotCursor <= 0 {
+		computed, err := q.LatestChangeCursor(ctx, userID)
+		if err != nil {
+			return SnapshotResponse{}, err
+		}
+		snapshotCursor = computed
 	}
 
 	switch req.Entity {
@@ -97,10 +104,21 @@ func (s *SnapshotService) snapshotSessions(
 	}
 
 	sessions := make([]Session, 0, len(rows))
-	var nextAfterID uuid.UUID
 	for _, row := range rows {
 		sessions = append(sessions, sessionFromDB(row))
-		nextAfterID = row.ID
+	}
+
+	if s.maxResponseBytes > 0 {
+		var trimmed bool
+		sessions, trimmed = trimSessionsByBytes(sessions, s.maxResponseBytes)
+		if trimmed {
+			hasMore = true
+		}
+	}
+
+	var nextAfterID uuid.UUID
+	if len(sessions) > 0 {
+		nextAfterID = sessions[len(sessions)-1].ID
 	}
 
 	resp := SnapshotResponse{
@@ -137,10 +155,21 @@ func (s *SnapshotService) snapshotSolves(
 	}
 
 	solves := make([]Solve, 0, len(rows))
-	var nextAfterID uuid.UUID
 	for _, row := range rows {
 		solves = append(solves, solveFromDB(row))
-		nextAfterID = row.ID
+	}
+
+	if s.maxResponseBytes > 0 {
+		var trimmed bool
+		solves, trimmed = trimSolvesByBytes(solves, s.maxResponseBytes)
+		if trimmed {
+			hasMore = true
+		}
+	}
+
+	var nextAfterID uuid.UUID
+	if len(solves) > 0 {
+		nextAfterID = solves[len(solves)-1].ID
 	}
 
 	resp := SnapshotResponse{
@@ -154,4 +183,50 @@ func (s *SnapshotService) snapshotSolves(
 	}
 	// When has_more == false and NextEntity is empty, bootstrap is complete.
 	return resp, nil
+}
+
+// entityEnvelopeOverhead is a conservative estimate of the JSON envelope bytes
+// surrounding each snapshot entity (UUIDs, version, timestamps).
+const entityEnvelopeOverhead = 120
+
+func trimSessionsByBytes(sessions []Session, budget int) ([]Session, bool) {
+	if budget <= 0 || len(sessions) <= 1 {
+		return sessions, false
+	}
+	total := 0
+	keep := 0
+	for i, session := range sessions {
+		raw, err := json.Marshal(session)
+		if err != nil {
+			continue
+		}
+		size := len(raw) + entityEnvelopeOverhead
+		if total+size > budget && i > 0 {
+			break
+		}
+		total += size
+		keep = i + 1
+	}
+	return sessions[:keep], keep < len(sessions)
+}
+
+func trimSolvesByBytes(solves []Solve, budget int) ([]Solve, bool) {
+	if budget <= 0 || len(solves) <= 1 {
+		return solves, false
+	}
+	total := 0
+	keep := 0
+	for i, solve := range solves {
+		raw, err := json.Marshal(solve)
+		if err != nil {
+			continue
+		}
+		size := len(raw) + entityEnvelopeOverhead
+		if total+size > budget && i > 0 {
+			break
+		}
+		total += size
+		keep = i + 1
+	}
+	return solves[:keep], keep < len(solves)
 }

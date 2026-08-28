@@ -105,25 +105,28 @@ Request:
 ```json
 {
   "device": { "id": "8008...", "name": "...", "platform": "..." },
-  "cursor": "",
-  "limit": 1000
+  "cursor": 0,
+  "entity": "session",
+  "after_id": "00000000-0000-0000-0000-000000000000",
+  "page_size": 500
 }
 ```
 
-The string `cursor` is an opaque keyset cursor. Pass the `next_cursor` from the response to the next request until `has_more` is false.
-After the final snapshot page, save the `sync_cursor` returned in the response as your initial sync cursor, and switch to using `POST /v1/sync`.
+Start with `entity: "session"` and a zero `after_id`. Keep requesting pages until `has_more` is false, then switch `entity` to `"solve"` and start again from a zero `after_id`. Each response returns `next_after_id` for the current entity's next page.
+
+The `cursor` is a stable change-log watermark. Pass `0` on the very first request; echo the response `cursor` back on every later page. After the final snapshot page, save that cursor as your initial sync cursor and switch to `POST /v1/sync`. Because the cursor is fixed at bootstrap start, any changes that land while pages are being streamed are delivered by incremental sync afterwards.
 
 ## Server-Side Statistics
 
 `GET /v1/stats` returns statistics computed directly by the server, eliminating the need to download all history to compute averages.
 Supports optional `?event=3x3` filtering.
 
-Returns the user's overall average (handling +2/DNF), best solve, solve count, and the Current/Best Average of 5 and Average of 12.
+Returns totals, min/max/mean/stddev/total (excluding DNF, with +2 applied), and the current (most recent) Average of 5, 12, 50, and 100. DNF and +2 handling matches the CubeTimer client: more than one DNF in a window makes that average a DNF.
 
 ## History Endpoints
 
 `GET /v1/sessions` and `GET /v1/sessions/{id}/solves` provide cursor-based pagination over a user's entire history.
-Pass `?limit=50` and `?cursor=...` to paginate. The `next_cursor` is returned in the response.
+Pass `?limit=50` and `?cursor=...` to paginate. The `next_cursor` and `has_more` are returned in the response.
 
 ## Recommended client loop
 
