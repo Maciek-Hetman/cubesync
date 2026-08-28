@@ -78,6 +78,8 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 	r.Group(func(r chi.Router) {
 		r.Use(h.authenticate)
 		r.Get("/v1/me", h.me)
+		r.Delete("/v1/me", h.deleteAccount)
+		r.Put("/v1/me/password", h.changePassword)
 		r.With(h.requireVerified).Post("/v1/sync", h.synchronize)
 		r.With(h.requireVerified).Post("/v1/snapshot", h.snapshot)
 		r.With(h.requireVerified).Get("/v1/stats", h.stats)

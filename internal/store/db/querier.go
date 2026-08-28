@@ -24,11 +24,13 @@ type Querier interface {
 	DeleteOldErrors(ctx context.Context) error
 	DeleteSession(ctx context.Context, arg DeleteSessionParams) (CubeSession, error)
 	DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf, error)
+	DeleteUser(ctx context.Context, id uuid.UUID) error
 	GetIdentityForUserProvider(ctx context.Context, arg GetIdentityForUserProviderParams) (Identity, error)
 	GetLiveSession(ctx context.Context, arg GetLiveSessionParams) (CubeSession, error)
 	GetOneTimeTokenForUpdate(ctx context.Context, arg GetOneTimeTokenForUpdateParams) (OneTimeToken, error)
 	GetOverviewStats(ctx context.Context) (GetOverviewStatsRow, error)
 	GetPasswordCredentialByEmail(ctx context.Context, lower string) (GetPasswordCredentialByEmailRow, error)
+	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetProcessedMutation(ctx context.Context, arg GetProcessedMutationParams) (json.RawMessage, error)
 	GetRefreshTokenForUpdate(ctx context.Context, tokenHash []byte) (RefreshToken, error)
 	GetSessionForUpdate(ctx context.Context, arg GetSessionForUpdateParams) (CubeSession, error)

@@ -174,6 +174,32 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !h.decodeJSON(w, r, &body) {
+		return
+	}
+	p := principalFromContext(r.Context())
+	if err := h.auth.ChangePassword(r.Context(), p.UserID, body.CurrentPassword, body.NewPassword); err != nil {
+		h.writeAuthError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	p := principalFromContext(r.Context())
+	if err := h.auth.DeleteAccount(r.Context(), p.UserID); err != nil {
+		h.logger.Error("delete_account_failed", "error", err)
+		h.writeError(w, r, http.StatusInternalServerError, "internal_error", "request could not be completed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")

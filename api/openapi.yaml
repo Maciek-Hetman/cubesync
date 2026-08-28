@@ -261,6 +261,35 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteAccount
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Account deleted successfully
+        "401":
+          $ref: "#/components/responses/Error"
+  /v1/me/password:
+    put:
+      operationId: changePassword
+      tags: [account]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password changed successfully
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
   /v1/sync:
     post:
       operationId: synchronize
@@ -502,6 +531,17 @@ components:
               type: string
             message:
               type: string
+    ChangePasswordRequest:
+      type: object
+      required: [new_password]
+      properties:
+        current_password:
+          type: string
+          description: Required if the user already has a password set.
+        new_password:
+          type: string
+          minLength: 8
+
     PasswordCredentials:
       type: object
       required: [email, password]

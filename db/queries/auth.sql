@@ -93,3 +93,9 @@ UPDATE one_time_tokens SET used_at = now() WHERE id = $1 AND used_at IS NULL;
 -- name: InvalidateUserOneTimeTokens :exec
 UPDATE one_time_tokens SET used_at = now()
 WHERE user_id = $1 AND kind = $2 AND used_at IS NULL;
+
+-- name: GetPasswordCredentialByUserID :one
+SELECT * FROM password_credentials WHERE user_id = $1;
+
+-- name: DeleteUser :exec
+DELETE FROM users WHERE id = $1;

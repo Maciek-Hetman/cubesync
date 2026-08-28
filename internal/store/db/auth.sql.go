@@ -149,6 +149,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deleteUser = `-- name: DeleteUser :exec
+DELETE FROM users WHERE id = $1
+`
+
+func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUser, id)
+	return err
+}
+
 const getIdentityForUserProvider = `-- name: GetIdentityForUserProvider :one
 SELECT id, user_id, provider, subject, email, created_at FROM identities
 WHERE user_id = $1 AND provider = $2
@@ -224,6 +233,17 @@ func (q *Queries) GetPasswordCredentialByEmail(ctx context.Context, lower string
 		&i.UserRole,
 		&i.PasswordHash,
 	)
+	return i, err
+}
+
+const getPasswordCredentialByUserID = `-- name: GetPasswordCredentialByUserID :one
+SELECT user_id, password_hash, updated_at FROM password_credentials WHERE user_id = $1
+`
+
+func (q *Queries) GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error) {
+	row := q.db.QueryRow(ctx, getPasswordCredentialByUserID, userID)
+	var i PasswordCredential
+	err := row.Scan(&i.UserID, &i.PasswordHash, &i.UpdatedAt)
 	return i, err
 }
 

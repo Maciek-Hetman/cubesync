@@ -229,6 +229,42 @@ func (e SessionInputKind) Valid() bool {
 	}
 }
 
+// Defines values for SnapshotRequestEntity.
+const (
+	SnapshotRequestEntitySession SnapshotRequestEntity = "session"
+	SnapshotRequestEntitySolve   SnapshotRequestEntity = "solve"
+)
+
+// Valid indicates whether the value is a known member of the SnapshotRequestEntity enum.
+func (e SnapshotRequestEntity) Valid() bool {
+	switch e {
+	case SnapshotRequestEntitySession:
+		return true
+	case SnapshotRequestEntitySolve:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SnapshotResponseNextEntity.
+const (
+	SnapshotResponseNextEntitySession SnapshotResponseNextEntity = "session"
+	SnapshotResponseNextEntitySolve   SnapshotResponseNextEntity = "solve"
+)
+
+// Valid indicates whether the value is a known member of the SnapshotResponseNextEntity enum.
+func (e SnapshotResponseNextEntity) Valid() bool {
+	switch e {
+	case SnapshotResponseNextEntitySession:
+		return true
+	case SnapshotResponseNextEntitySolve:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SolvePenalty.
 const (
 	SolvePenaltyDnf     SolvePenalty = "dnf"
@@ -489,6 +525,27 @@ type ChangeEntity string
 // ChangeOperation defines model for Change.Operation.
 type ChangeOperation string
 
+// ChangePasswordRequest defines model for ChangePasswordRequest.
+type ChangePasswordRequest struct {
+	// CurrentPassword Required if the user already has a password set.
+	CurrentPassword *string `json:"current_password,omitempty"`
+	NewPassword     string  `json:"new_password"`
+}
+
+// ConflictStub defines model for ConflictStub.
+type ConflictStub struct {
+	Id        openapi_types.UUID `json:"id"`
+	UpdatedAt time.Time          `json:"updated_at"`
+	Version   int64              `json:"version"`
+}
+
+// DeleteStub defines model for DeleteStub.
+type DeleteStub struct {
+	DeletedAt *time.Time         `json:"deleted_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Version   int64              `json:"version"`
+}
+
 // Device defines model for Device.
 type Device struct {
 	Id       openapi_types.UUID `json:"id"`
@@ -568,6 +625,20 @@ type MutationOutcome_Current struct {
 // MutationOutcomeStatus defines model for MutationOutcome.Status.
 type MutationOutcomeStatus string
 
+// PaginatedSessionsResponse defines model for PaginatedSessionsResponse.
+type PaginatedSessionsResponse struct {
+	HasMore    *bool             `json:"has_more,omitempty"`
+	NextCursor *string           `json:"next_cursor,omitempty"`
+	Sessions   *[]SessionSummary `json:"sessions,omitempty"`
+}
+
+// PaginatedSolvesResponse defines model for PaginatedSolvesResponse.
+type PaginatedSolvesResponse struct {
+	HasMore    *bool    `json:"has_more,omitempty"`
+	NextCursor *string  `json:"next_cursor,omitempty"`
+	Solves     *[]Solve `json:"solves,omitempty"`
+}
+
 // PasswordCredentials defines model for PasswordCredentials.
 type PasswordCredentials struct {
 	Email    openapi_types.Email `json:"email"`
@@ -610,6 +681,47 @@ type SessionInput struct {
 // SessionInputKind defines model for SessionInput.Kind.
 type SessionInputKind string
 
+// SessionSummary defines model for SessionSummary.
+type SessionSummary struct {
+	Archived   *bool               `json:"archived,omitempty"`
+	EndedAt    *time.Time          `json:"ended_at,omitempty"`
+	Event      *string             `json:"event,omitempty"`
+	Id         *openapi_types.UUID `json:"id,omitempty"`
+	Kind       *string             `json:"kind,omitempty"`
+	Name       *string             `json:"name,omitempty"`
+	SolveCount *int                `json:"solve_count,omitempty"`
+	StartedAt  *time.Time          `json:"started_at,omitempty"`
+}
+
+// SnapshotRequest defines model for SnapshotRequest.
+type SnapshotRequest struct {
+	// AfterId Keyset position for the current entity. Zero UUID for the first page of each entity.
+	AfterId *openapi_types.UUID `json:"after_id,omitempty"`
+
+	// Cursor Change-log watermark. 0 on the first page; echo the response cursor on subsequent pages.
+	Cursor   *int64                 `json:"cursor,omitempty"`
+	Device   Device                 `json:"device"`
+	Entity   *SnapshotRequestEntity `json:"entity,omitempty"`
+	PageSize *int                   `json:"page_size,omitempty"`
+}
+
+// SnapshotRequestEntity defines model for SnapshotRequest.Entity.
+type SnapshotRequestEntity string
+
+// SnapshotResponse defines model for SnapshotResponse.
+type SnapshotResponse struct {
+	// Cursor Stable change-log watermark to use as the initial sync cursor once bootstrap completes.
+	Cursor      int64                       `json:"cursor"`
+	HasMore     bool                        `json:"has_more"`
+	NextAfterId *openapi_types.UUID         `json:"next_after_id,omitempty"`
+	NextEntity  *SnapshotResponseNextEntity `json:"next_entity,omitempty"`
+	Sessions    *[]Session                  `json:"sessions,omitempty"`
+	Solves      *[]Solve                    `json:"solves,omitempty"`
+}
+
+// SnapshotResponseNextEntity defines model for SnapshotResponse.NextEntity.
+type SnapshotResponseNextEntity string
+
 // Solve defines model for Solve.
 type Solve struct {
 	DeletedAt  *time.Time          `json:"deleted_at,omitempty"`
@@ -640,6 +752,22 @@ type SolveInput struct {
 
 // SolveInputPenalty defines model for SolveInput.Penalty.
 type SolveInputPenalty string
+
+// StatsResponse defines model for StatsResponse.
+type StatsResponse struct {
+	Ao100        *int64  `json:"ao100,omitempty"`
+	Ao12         *int64  `json:"ao12,omitempty"`
+	Ao5          *int64  `json:"ao5,omitempty"`
+	Ao50         *int64  `json:"ao50,omitempty"`
+	CountedCount int64   `json:"counted_count"`
+	DnfCount     int64   `json:"dnf_count"`
+	MaxMs        int64   `json:"max_ms"`
+	MeanMs       float64 `json:"mean_ms"`
+	MinMs        int64   `json:"min_ms"`
+	StddevMs     float64 `json:"stddev_ms"`
+	TotalCount   int64   `json:"total_count"`
+	TotalMs      int64   `json:"total_ms"`
+}
 
 // Status defines model for Status.
 type Status struct {
@@ -732,6 +860,23 @@ type ResetPasswordJSONBody struct {
 	Token       string `json:"token"`
 }
 
+// GetV1SessionsParams defines parameters for GetV1Sessions.
+type GetV1SessionsParams struct {
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// GetV1SessionsIdSolvesParams defines parameters for GetV1SessionsIdSolves.
+type GetV1SessionsIdSolvesParams struct {
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// GetV1StatsParams defines parameters for GetV1Stats.
+type GetV1StatsParams struct {
+	Event *string `form:"event,omitempty" json:"event,omitempty"`
+}
+
 // ResendVerificationJSONRequestBody defines body for ResendVerification for application/json ContentType.
 type ResendVerificationJSONRequestBody ResendVerificationJSONBody
 
@@ -761,6 +906,12 @@ type RefreshJSONRequestBody = RefreshToken
 
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = PasswordCredentials
+
+// ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
+type ChangePasswordJSONRequestBody = ChangePasswordRequest
+
+// PostV1SnapshotJSONRequestBody defines body for PostV1Snapshot for application/json ContentType.
+type PostV1SnapshotJSONRequestBody = SnapshotRequest
 
 // SynchronizeJSONRequestBody defines body for Synchronize for application/json ContentType.
 type SynchronizeJSONRequestBody = SyncRequest
@@ -807,6 +958,32 @@ func (t *Change_Data) FromSolve(v Solve) error {
 
 // MergeSolve performs a merge with any union data inside the Change_Data, using the provided Solve
 func (t *Change_Data) MergeSolve(v Solve) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDeleteStub returns the union data inside the Change_Data as a DeleteStub
+func (t Change_Data) AsDeleteStub() (DeleteStub, error) {
+	var body DeleteStub
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeleteStub overwrites any union data inside the Change_Data as the provided DeleteStub
+func (t *Change_Data) FromDeleteStub(v DeleteStub) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeleteStub performs a merge with any union data inside the Change_Data, using the provided DeleteStub
+func (t *Change_Data) MergeDeleteStub(v DeleteStub) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -1103,6 +1280,32 @@ func (t *MutationOutcome_Current) MergeSolve(v Solve) error {
 	return err
 }
 
+// AsConflictStub returns the union data inside the MutationOutcome_Current as a ConflictStub
+func (t MutationOutcome_Current) AsConflictStub() (ConflictStub, error) {
+	var body ConflictStub
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromConflictStub overwrites any union data inside the MutationOutcome_Current as the provided ConflictStub
+func (t *MutationOutcome_Current) FromConflictStub(v ConflictStub) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeConflictStub performs a merge with any union data inside the MutationOutcome_Current, using the provided ConflictStub
+func (t *MutationOutcome_Current) MergeConflictStub(v ConflictStub) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t MutationOutcome_Current) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
@@ -1118,48 +1321,61 @@ func (t *MutationOutcome_Current) UnmarshalJSON(b []byte) error {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"Mc/00/T/DAA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -407,6 +407,33 @@ func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password st
 	})
 }
 
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
+	q := storedb.New(s.pool)
+	
+	// Check if user has an existing password credential
+	cred, err := q.GetPasswordCredentialByUserID(ctx, userID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		// No existing password (e.g., federated only)
+		// We still require currentPassword to be empty or just ignore it.
+	} else {
+		// Verify the current password
+		valid, err := verifyPassword(currentPassword, cred.PasswordHash)
+		if err != nil || !valid {
+			return authError("invalid_credentials", "incorrect current password")
+		}
+	}
+	
+	return s.SetPassword(ctx, userID, newPassword)
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
+	return storedb.New(s.pool).DeleteUser(ctx, userID)
+}
+
+
 func (s *Service) User(ctx context.Context, userID uuid.UUID) (User, error) {
 	row, err := storedb.New(s.pool).GetUserByID(ctx, userID)
 	if err != nil {
