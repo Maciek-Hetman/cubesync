@@ -15,6 +15,7 @@ import (
 	"github.com/Maciek-Hetman/cubing-sync-backend/db/migrations"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/httpapi"
+	syncservice "github.com/Maciek-Hetman/cubing-sync-backend/internal/sync"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -80,6 +81,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	if err := pool.Ping(ctx); err != nil {
 		return err
 	}
+
+	retentionSvc := syncservice.NewRetentionService(pool, cfg.InactiveDeviceWindow, cfg.RetentionRunInterval)
+	defer retentionSvc.Shutdown()
+
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

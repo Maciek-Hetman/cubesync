@@ -13,14 +13,14 @@ import (
 func TestSyncRejectsDuplicateMutationIDsBeforeDatabaseAccess(t *testing.T) {
 	t.Parallel()
 	mutationID := uuid.New()
-	service := NewService(nil, 10, 10)
+	service := NewService(nil, 10, 10, 512*1024)
 	_, err := service.Sync(context.Background(), uuid.New(), Request{
 		Device: Device{ID: uuid.New()},
 		Mutations: []Mutation{
 			{ID: mutationID, Entity: "session", EntityID: uuid.New(), Operation: "delete"},
 			{ID: mutationID, Entity: "solve", EntityID: uuid.New(), Operation: "delete"},
 		},
-	})
+	}, 1)
 	var clientErr ClientError
 	if !errors.As(err, &clientErr) || clientErr.Code != "duplicate_mutation_id" {
 		t.Fatalf("expected duplicate_mutation_id, got %v", err)

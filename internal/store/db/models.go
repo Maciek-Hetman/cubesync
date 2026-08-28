@@ -37,12 +37,13 @@ type CubeSession struct {
 }
 
 type Device struct {
-	ID          uuid.UUID `json:"id"`
-	UserID      uuid.UUID `json:"user_id"`
-	Name        string    `json:"name"`
-	Platform    string    `json:"platform"`
-	FirstSeenAt time.Time `json:"first_seen_at"`
-	LastSeenAt  time.Time `json:"last_seen_at"`
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Name          string    `json:"name"`
+	Platform      string    `json:"platform"`
+	FirstSeenAt   time.Time `json:"first_seen_at"`
+	LastSeenAt    time.Time `json:"last_seen_at"`
+	LastAckCursor int64     `json:"last_ack_cursor"`
 }
 
 type Identity struct {

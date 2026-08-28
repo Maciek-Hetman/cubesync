@@ -102,3 +102,24 @@ LIMIT $3;
 -- name: LatestChangeCursor :one
 SELECT COALESCE(MAX(change_id), 0)::bigint FROM change_log
 WHERE user_id = $1;
+
+-- name: UpdateDeviceAckCursor :exec
+UPDATE devices
+SET last_ack_cursor = $3
+WHERE user_id = $1 AND id = $2 AND last_ack_cursor < $3;
+
+-- name: MinValidCursorForUser :one
+SELECT COALESCE(MIN(last_ack_cursor), 0)::bigint
+FROM devices
+WHERE user_id = $1 AND last_seen_at > $2;
+
+-- name: PruneChangeLog :execrows
+DELETE FROM change_log
+WHERE user_id = $1 AND change_id < $2;
+
+-- name: PruneProcessedMutations :execrows
+DELETE FROM processed_mutations
+WHERE user_id = $1 AND created_at < $2;
+
+-- name: ListUsersWithChanges :many
+SELECT DISTINCT user_id FROM change_log;

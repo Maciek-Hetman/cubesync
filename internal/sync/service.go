@@ -14,21 +14,34 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"time"
 )
 
 const maxSolveDurationMS = 24 * 60 * 60 * 1000
+
+// changeEnvelopeOverhead is a conservative estimate of JSON envelope bytes
+// surrounding each Change's payload (cursor, entity, entity_id, operation,
+// version, changed_at fields).
+const changeEnvelopeOverhead = 200
 
 type Service struct {
 	pool             *pgxpool.Pool
 	maxMutations     int
 	defaultMaxChange int
+	maxResponseBytes int
 }
 
-func NewService(pool *pgxpool.Pool, maxMutations, defaultMaxChange int) *Service {
-	return &Service{pool: pool, maxMutations: maxMutations, defaultMaxChange: defaultMaxChange}
+func NewService(pool *pgxpool.Pool, maxMutations, defaultMaxChange, maxResponseBytes int) *Service {
+	return &Service{
+		pool:             pool,
+		maxMutations:     maxMutations,
+		defaultMaxChange: defaultMaxChange,
+		maxResponseBytes: maxResponseBytes,
+	}
 }
 
-func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Response, error) {
+
+func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, protoVersion int) (Response, error) {
 	if req.Cursor < 0 {
 		return Response{}, clientError("invalid_cursor", "cursor cannot be negative")
 	}
@@ -57,8 +70,21 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 		limit = s.defaultMaxChange
 	}
 
+	// Check cursor expiry: if a cursor has been pruned, the client must resync.
+	if req.Cursor > 0 {
+		qCheck := storedb.New(s.pool)
+		cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour) // conservative default
+		minValid, err := qCheck.MinValidCursorForUser(ctx, storedb.MinValidCursorForUserParams{
+			UserID:     userID,
+			LastSeenAt: cutoff,
+		})
+		if err == nil && minValid > 0 && req.Cursor < minValid {
+			return Response{}, clientError("cursor_expired", "your sync cursor has expired; perform a full resync")
+		}
+	}
+
 	if len(req.Mutations) == 0 {
-		return s.pullOnly(ctx, userID, req, limit)
+		return s.pullOnly(ctx, userID, req, limit, protoVersion)
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -95,7 +121,7 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	})
 
 	for _, mutation := range ordered {
-		outcome, err := s.applyMutation(ctx, q, userID, req.Device.ID, mutation)
+		outcome, err := s.applyMutation(ctx, q, userID, req.Device.ID, mutation, protoVersion)
 		if err != nil {
 			return Response{}, err
 		}
@@ -117,23 +143,31 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request) (Resp
 	if hasMore {
 		rows = rows[:limit]
 	}
-	changes := make([]Change, 0, len(rows))
-	nextCursor := req.Cursor
-	for _, row := range rows {
-		changes = append(changes, Change{
-			Cursor: row.ChangeID, Entity: row.EntityType, EntityID: row.EntityID,
-			Operation: row.Operation, Version: row.Version, Data: row.Payload, ChangedAt: row.CreatedAt,
-		})
-		nextCursor = row.ChangeID
+	changes, nextCursor := s.buildChanges(rows, req.Cursor, protoVersion)
+	if s.maxResponseBytes > 0 {
+		changes, hasMore, nextCursor = s.applyByteLimit(changes, rows, req.Cursor, hasMore)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Response{}, err
 	}
+
+	// Update device's acknowledged cursor asynchronously — non-critical.
+	if nextCursor > req.Cursor {
+		go func() {
+			qAck := storedb.New(s.pool)
+			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
+				UserID: userID, ID: req.Device.ID, LastAckCursor: nextCursor,
+			})
+		}()
+	}
+
 	return Response{Outcomes: outcomes, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
-func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, limit int) (Response, error) {
+func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, limit int, protoVersion int) (Response, error) {
 	q := storedb.New(s.pool)
 
 	if err := q.UpsertDevice(ctx, storedb.UpsertDeviceParams{
@@ -152,23 +186,75 @@ func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, l
 	if hasMore {
 		rows = rows[:limit]
 	}
+	changes, nextCursor := s.buildChanges(rows, req.Cursor, protoVersion)
+	if s.maxResponseBytes > 0 {
+		changes, hasMore, nextCursor = s.applyByteLimit(changes, rows, req.Cursor, hasMore)
+	}
+
+	if nextCursor > req.Cursor {
+		go func() {
+			qAck := storedb.New(s.pool)
+			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
+				UserID: userID, ID: req.Device.ID, LastAckCursor: nextCursor,
+			})
+		}()
+	}
+
+	return Response{Outcomes: []MutationOutcome{}, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
+}
+
+// buildChanges converts DB change_log rows into Change structs, optionally producing
+// slim payloads for delete operations under protocol v2+.
+func (s *Service) buildChanges(rows []storedb.ChangeLog, baseCursor int64, protoVersion int) ([]Change, int64) {
 	changes := make([]Change, 0, len(rows))
-	nextCursor := req.Cursor
+	nextCursor := baseCursor
 	for _, row := range rows {
+		data := row.Payload
+		if protoVersion >= 2 && row.Operation == "delete" {
+			// Slim delete payload: only id, version, deleted_at.
+			stub := DeleteStub{ID: row.EntityID, Version: row.Version}
+			if b, err := json.Marshal(stub); err == nil {
+				data = b
+			}
+		}
 		changes = append(changes, Change{
 			Cursor: row.ChangeID, Entity: row.EntityType, EntityID: row.EntityID,
-			Operation: row.Operation, Version: row.Version, Data: row.Payload, ChangedAt: row.CreatedAt,
+			Operation: row.Operation, Version: row.Version, Data: data, ChangedAt: row.CreatedAt,
 		})
 		nextCursor = row.ChangeID
 	}
-	return Response{Outcomes: []MutationOutcome{}, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
+	return changes, nextCursor
 }
+
+// applyByteLimit truncates the changes slice if the estimated serialised size
+// would exceed s.maxResponseBytes. Returns the updated changes, hasMore flag,
+// and the cursor of the last included change.
+func (s *Service) applyByteLimit(changes []Change, rows []storedb.ChangeLog, baseCursor int64, hasMore bool) ([]Change, bool, int64) {
+	var total int
+	nextCursor := baseCursor
+	for i, ch := range changes {
+		total += len(ch.Data) + changeEnvelopeOverhead
+		if total > s.maxResponseBytes {
+			// Stop before this change.
+			return changes[:i], true, nextCursor
+		}
+		if i < len(rows) {
+			nextCursor = rows[i].ChangeID
+		}
+	}
+	return changes, hasMore, nextCursor
+}
+
+
 
 func (s *Service) applyMutation(
 	ctx context.Context,
 	q *storedb.Queries,
 	userID, deviceID uuid.UUID,
 	m Mutation,
+	protoVersion int,
 ) (MutationOutcome, error) {
 	if m.ID != uuid.Nil {
 		if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), deviceID.String(), "mutation", m.ID.String())); err != nil {
@@ -192,9 +278,9 @@ func (s *Service) applyMutation(
 	var outcome MutationOutcome
 	switch m.Entity {
 	case "session":
-		outcome = s.applySession(ctx, q, userID, m)
+		outcome = s.applySession(ctx, q, userID, m, protoVersion)
 	case "solve":
-		outcome = s.applySolve(ctx, q, userID, m)
+		outcome = s.applySolve(ctx, q, userID, m, protoVersion)
 	default:
 		outcome = rejected(m.ID, "invalid_entity", "entity must be session or solve")
 	}
@@ -216,7 +302,8 @@ func (s *Service) applyMutation(
 	return outcome, nil
 }
 
-func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation) MutationOutcome {
+
+func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
 	}
@@ -233,7 +320,7 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 			return rejected(m.ID, "not_found", "session does not exist")
 		}
 		if current.Version != m.BaseVersion {
-			return sessionConflict(m.ID, current)
+			return sessionConflict(m.ID, current, protoVersion)
 		}
 		deleted, err := q.DeleteSession(ctx, storedb.DeleteSessionParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
@@ -267,7 +354,7 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 		})
 	} else {
 		if current.Version != m.BaseVersion {
-			return sessionConflict(m.ID, current)
+			return sessionConflict(m.ID, current, protoVersion)
 		}
 		result, err = q.UpdateSession(ctx, storedb.UpdateSessionParams{
 			UserID: userID, ID: input.ID, Name: input.Name, Event: input.Event, Kind: input.Kind,
@@ -283,7 +370,8 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 	return accepted(m.ID, result.Version)
 }
 
-func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation) MutationOutcome {
+
+func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome
 	}
@@ -300,7 +388,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 			return rejected(m.ID, "not_found", "solve does not exist")
 		}
 		if current.Version != m.BaseVersion {
-			return solveConflict(m.ID, current)
+			return solveConflict(m.ID, current, protoVersion)
 		}
 		deleted, err := q.DeleteSolve(ctx, storedb.DeleteSolveParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
@@ -338,7 +426,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		})
 	} else {
 		if current.Version != m.BaseVersion {
-			return solveConflict(m.ID, current)
+			return solveConflict(m.ID, current, protoVersion)
 		}
 		result, err = q.UpdateSolve(ctx, storedb.UpdateSolveParams{
 			UserID: userID, ID: input.ID, SessionID: sessionID, DurationMs: input.DurationMS,
@@ -357,6 +445,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	}
 	return accepted(m.ID, result.Version)
 }
+
 
 func validateMutationEnvelope(m Mutation) *MutationOutcome {
 	if m.ID == uuid.Nil {
@@ -476,13 +565,23 @@ func solveFromDB(row storedb.Solf) Solve {
 	}
 }
 
-func sessionConflict(mutationID uuid.UUID, current storedb.CubeSession) MutationOutcome {
-	raw, _ := json.Marshal(sessionFromDB(current))
+func sessionConflict(mutationID uuid.UUID, current storedb.CubeSession, protoVersion int) MutationOutcome {
+	var raw []byte
+	if protoVersion >= 2 {
+		raw, _ = json.Marshal(ConflictStub{ID: current.ID, Version: current.Version, UpdatedAt: current.UpdatedAt})
+	} else {
+		raw, _ = json.Marshal(sessionFromDB(current))
+	}
 	return MutationOutcome{MutationID: mutationID, Status: "conflict", Version: current.Version, Current: raw}
 }
 
-func solveConflict(mutationID uuid.UUID, current storedb.Solf) MutationOutcome {
-	raw, _ := json.Marshal(solveFromDB(current))
+func solveConflict(mutationID uuid.UUID, current storedb.Solf, protoVersion int) MutationOutcome {
+	var raw []byte
+	if protoVersion >= 2 {
+		raw, _ = json.Marshal(ConflictStub{ID: current.ID, Version: current.Version, UpdatedAt: current.UpdatedAt})
+	} else {
+		raw, _ = json.Marshal(solveFromDB(current))
+	}
 	return MutationOutcome{MutationID: mutationID, Status: "conflict", Version: current.Version, Current: raw}
 }
 

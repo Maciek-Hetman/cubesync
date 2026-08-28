@@ -35,6 +35,10 @@ type Config struct {
 	LogOneTimeLinks     bool
 	MaxSyncMutations    int
 	MaxSyncChanges      int
+	MaxSyncResponseBytes int
+	InactiveDeviceWindow time.Duration
+	RetentionRunInterval time.Duration
+	EnableCompression    bool
 	ReadinessTimeout    time.Duration
 	ShutdownGracePeriod time.Duration
 }
@@ -70,6 +74,10 @@ func Load() (Config, error) {
 		LogOneTimeLinks:     boolEnv("LOG_ONE_TIME_LINKS", true),
 		MaxSyncMutations:    intEnv("MAX_SYNC_MUTATIONS", 500),
 		MaxSyncChanges:      intEnv("MAX_SYNC_CHANGES", 1000),
+		MaxSyncResponseBytes: intEnv("MAX_SYNC_RESPONSE_BYTES", 512*1024),
+		InactiveDeviceWindow: durationEnv("INACTIVE_DEVICE_WINDOW", 90*24*time.Hour),
+		RetentionRunInterval: durationEnv("RETENTION_RUN_INTERVAL", 1*time.Hour),
+		EnableCompression:    boolEnv("ENABLE_COMPRESSION", true),
 		ReadinessTimeout:    durationEnv("READINESS_TIMEOUT", 2*time.Second),
 		ShutdownGracePeriod: durationEnv("SHUTDOWN_GRACE_PERIOD", 10*time.Second),
 	}

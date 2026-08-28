@@ -1,0 +1,94 @@
+    SnapshotRequest:
+      type: object
+      required: [device]
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        cursor:
+          type: string
+        limit:
+          type: integer
+    SnapshotResponse:
+      type: object
+      required: [sessions, solves, next_cursor, has_more, sync_cursor]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        solves:
+          type: array
+          items:
+            $ref: "#/components/schemas/Solve"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+        sync_cursor:
+          type: integer
+          format: int64
+    StatsResponse:
+      type: object
+      properties:
+        total_solves:
+          type: integer
+        counted_solves:
+          type: integer
+        dnf_solves:
+          type: integer
+        best_solve_ms:
+          type: integer
+        mean_solve_ms:
+          type: integer
+        current_ao5_ms:
+          type: integer
+        best_ao5_ms:
+          type: integer
+        current_ao12_ms:
+          type: integer
+        best_ao12_ms:
+          type: integer
+    SessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        event:
+          type: string
+        kind:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        archived:
+          type: boolean
+        solve_count:
+          type: integer
+    PaginatedSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    PaginatedSolvesResponse:
+      type: object
+      properties:
+        solves:
+          type: array
+          items:
+            $ref: "#/components/schemas/Solve"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean

@@ -378,6 +378,84 @@ func (q *Queries) ListChanges(ctx context.Context, arg ListChangesParams) ([]Cha
 	return items, nil
 }
 
+const listUsersWithChanges = `-- name: ListUsersWithChanges :many
+SELECT DISTINCT user_id FROM change_log
+`
+
+func (q *Queries) ListUsersWithChanges(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listUsersWithChanges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const minValidCursorForUser = `-- name: MinValidCursorForUser :one
+SELECT COALESCE(MIN(last_ack_cursor), 0)::bigint
+FROM devices
+WHERE user_id = $1 AND last_seen_at > $2
+`
+
+type MinValidCursorForUserParams struct {
+	UserID     uuid.UUID `json:"user_id"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+func (q *Queries) MinValidCursorForUser(ctx context.Context, arg MinValidCursorForUserParams) (int64, error) {
+	row := q.db.QueryRow(ctx, minValidCursorForUser, arg.UserID, arg.LastSeenAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pruneChangeLog = `-- name: PruneChangeLog :execrows
+DELETE FROM change_log
+WHERE user_id = $1 AND change_id < $2
+`
+
+type PruneChangeLogParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	ChangeID int64     `json:"change_id"`
+}
+
+func (q *Queries) PruneChangeLog(ctx context.Context, arg PruneChangeLogParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneChangeLog, arg.UserID, arg.ChangeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneProcessedMutations = `-- name: PruneProcessedMutations :execrows
+DELETE FROM processed_mutations
+WHERE user_id = $1 AND created_at < $2
+`
+
+type PruneProcessedMutationsParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) PruneProcessedMutations(ctx context.Context, arg PruneProcessedMutationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneProcessedMutations, arg.UserID, arg.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordProcessedMutation = `-- name: RecordProcessedMutation :exec
 INSERT INTO processed_mutations (user_id, device_id, mutation_id, outcome)
 VALUES ($1, $2, $3, $4)
@@ -398,6 +476,23 @@ func (q *Queries) RecordProcessedMutation(ctx context.Context, arg RecordProcess
 		arg.MutationID,
 		arg.Outcome,
 	)
+	return err
+}
+
+const updateDeviceAckCursor = `-- name: UpdateDeviceAckCursor :exec
+UPDATE devices
+SET last_ack_cursor = $3
+WHERE user_id = $1 AND id = $2 AND last_ack_cursor < $3
+`
+
+type UpdateDeviceAckCursorParams struct {
+	UserID        uuid.UUID `json:"user_id"`
+	ID            uuid.UUID `json:"id"`
+	LastAckCursor int64     `json:"last_ack_cursor"`
+}
+
+func (q *Queries) UpdateDeviceAckCursor(ctx context.Context, arg UpdateDeviceAckCursorParams) error {
+	_, err := q.db.Exec(ctx, updateDeviceAckCursor, arg.UserID, arg.ID, arg.LastAckCursor)
 	return err
 }
 

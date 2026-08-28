@@ -82,7 +82,48 @@ Changes are globally ordered per database and filtered to the authenticated user
 
 When `has_more` is true, immediately call sync again with `next_cursor`. An empty page preserves the supplied cursor.
 
-The initial implementation retains all change rows and deletion tombstones. A future compaction policy must introduce a minimum valid cursor and a full-resync response before pruning.
+The backend limits sync response payloads by size (default 512KB). A page may return fewer changes than requested if it hits the byte budget, but it will set `has_more` to true.
+
+### Cursor Expiry
+The server prunes old change rows that all devices have acknowledged, or that are older than the retention window (e.g., 90 days). 
+If a client requests a `cursor` that is older than the oldest retained change, the server returns an HTTP 409 Conflict with code `cursor_expired`.
+The client must discard its local cursor and sync state, and perform a full bootstrap using the snapshot endpoint.
+
+## Protocol v2 Negotiation
+
+Clients can opt into version 2 of the sync protocol by sending the `X-Sync-Protocol: 2` HTTP header. 
+In v2, deletion changes and conflict payloads are minimized:
+- `delete` changes only include `id`, `version`, and `deleted_at`.
+- `conflict` outcomes omit the full entity data and instead return a `ConflictStub` with only `id`, `version`, and `updated_at`.
+
+## Snapshot / Bootstrap Sync
+
+`POST /v1/snapshot` is used for initial sync on a new device or when recovering from `cursor_expired`.
+It returns the latest state of all entities, bypassing the change log history.
+
+Request:
+```json
+{
+  "device": { "id": "8008...", "name": "...", "platform": "..." },
+  "cursor": "",
+  "limit": 1000
+}
+```
+
+The string `cursor` is an opaque keyset cursor. Pass the `next_cursor` from the response to the next request until `has_more` is false.
+After the final snapshot page, save the `sync_cursor` returned in the response as your initial sync cursor, and switch to using `POST /v1/sync`.
+
+## Server-Side Statistics
+
+`GET /v1/stats` returns statistics computed directly by the server, eliminating the need to download all history to compute averages.
+Supports optional `?event=3x3` filtering.
+
+Returns the user's overall average (handling +2/DNF), best solve, solve count, and the Current/Best Average of 5 and Average of 12.
+
+## History Endpoints
+
+`GET /v1/sessions` and `GET /v1/sessions/{id}/solves` provide cursor-based pagination over a user's entire history.
+Pass `?limit=50` and `?cursor=...` to paginate. The `next_cursor` is returned in the response.
 
 ## Recommended client loop
 

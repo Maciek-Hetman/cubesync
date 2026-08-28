@@ -349,6 +349,94 @@ paths:
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
+  /v1/snapshot:
+    post:
+      summary: Snapshot bootstrap sync
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotRequest"
+      responses:
+        '200':
+          description: Snapshot response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotResponse"
+  /v1/stats:
+    get:
+      summary: Get user statistics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: event
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Statistics response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+  /v1/sessions:
+    get:
+      summary: List sessions paginated
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated sessions response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSessionsResponse"
+  "/v1/sessions/{id}/solves":
+    get:
+      summary: List solves for session paginated
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated solves response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSolvesResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -859,5 +947,99 @@ components:
         next_cursor:
           type: integer
           format: int64
+        has_more:
+          type: boolean
+    SnapshotRequest:
+      type: object
+      required: [device]
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        cursor:
+          type: string
+        limit:
+          type: integer
+    SnapshotResponse:
+      type: object
+      required: [sessions, solves, next_cursor, has_more, sync_cursor]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        solves:
+          type: array
+          items:
+            $ref: "#/components/schemas/Solve"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+        sync_cursor:
+          type: integer
+          format: int64
+    StatsResponse:
+      type: object
+      properties:
+        total_solves:
+          type: integer
+        counted_solves:
+          type: integer
+        dnf_solves:
+          type: integer
+        best_solve_ms:
+          type: integer
+        mean_solve_ms:
+          type: integer
+        current_ao5_ms:
+          type: integer
+        best_ao5_ms:
+          type: integer
+        current_ao12_ms:
+          type: integer
+        best_ao12_ms:
+          type: integer
+    SessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        event:
+          type: string
+        kind:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        archived:
+          type: boolean
+        solve_count:
+          type: integer
+    PaginatedSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    PaginatedSolvesResponse:
+      type: object
+      properties:
+        solves:
+          type: array
+          items:
+            $ref: "#/components/schemas/Solve"
+        next_cursor:
+          type: string
         has_more:
           type: boolean

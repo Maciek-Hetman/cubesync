@@ -18,20 +18,27 @@ import (
 )
 
 type Handler struct {
-	config config.Config
-	db     *pgxpool.Pool
-	logger *slog.Logger
-	auth   *auth.Service
-	sync   *syncservice.Service
-	admin  *admin.Service
+	config  config.Config
+	db      *pgxpool.Pool
+	logger  *slog.Logger
+	auth    *auth.Service
+	sync    *syncservice.Service
+	admin   *admin.Service
+	snapshot_ *syncservice.SnapshotService
+	stats_    *syncservice.StatsService
 }
 
 func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	authService := auth.NewService(cfg, db, auth.NewMailer(cfg, logger), auth.NewOIDCVerifier(cfg))
 	h := &Handler{
-		config: cfg, db: db, logger: logger, auth: authService,
-		sync:  syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges),
-		admin: admin.NewService(db),
+		config:    cfg,
+		db:        db,
+		logger:    logger,
+		auth:      authService,
+		sync:      syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges, cfg.MaxSyncResponseBytes),
+		admin:     admin.NewService(db),
+		snapshot_: syncservice.NewSnapshotService(db, cfg.MaxSyncResponseBytes),
+		stats_:    syncservice.NewStatsService(db),
 	}
 	authLimit := newIPRateLimiter(10, 5)
 	r := chi.NewRouter()
@@ -41,6 +48,9 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(h.securityHeaders)
 	r.Use(h.cors)
+	if cfg.EnableCompression {
+		r.Use(middleware.Compress(5, "application/json"))
+	}
 
 	r.Get("/health/live", h.live)
 	r.Get("/health/ready", h.ready)
@@ -69,6 +79,10 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 		r.Use(h.authenticate)
 		r.Get("/v1/me", h.me)
 		r.With(h.requireVerified).Post("/v1/sync", h.synchronize)
+		r.With(h.requireVerified).Post("/v1/snapshot", h.snapshot)
+		r.With(h.requireVerified).Get("/v1/stats", h.stats)
+		r.With(h.requireVerified).Get("/v1/sessions", h.listSessions)
+		r.With(h.requireVerified).Get("/v1/sessions/{id}/solves", h.listSessionSolves)
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
 			r.Get("/v1/admin/stats/overview", h.adminOverview)
@@ -79,6 +93,8 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 
 	return r
 }
+
+
 
 func (h *Handler) live(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -115,7 +131,7 @@ func (h *Handler) cors(next http.Handler) http.Handler {
 			if _, ok := allowed[origin]; ok {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Sync-Protocol")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			}
 		}

@@ -44,8 +44,14 @@ type Querier interface {
 	ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error)
 	ListIndividualErrors(ctx context.Context, arg ListIndividualErrorsParams) ([]RequestError, error)
 	ListRequestStats(ctx context.Context, arg ListRequestStatsParams) ([]ListRequestStatsRow, error)
+	ListSessionsPaginated(ctx context.Context, arg ListSessionsPaginatedParams) ([]ListSessionsPaginatedRow, error)
+	ListSolvesForSessionPaginated(ctx context.Context, arg ListSolvesForSessionPaginatedParams) ([]Solf, error)
+	ListUsersWithChanges(ctx context.Context) ([]uuid.UUID, error)
 	MarkOneTimeTokenUsed(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
+	MinValidCursorForUser(ctx context.Context, arg MinValidCursorForUserParams) (int64, error)
+	PruneChangeLog(ctx context.Context, arg PruneChangeLogParams) (int64, error)
+	PruneProcessedMutations(ctx context.Context, arg PruneProcessedMutationsParams) (int64, error)
 	RecordProcessedMutation(ctx context.Context, arg RecordProcessedMutationParams) error
 	RecordRequestError(ctx context.Context, arg RecordRequestErrorParams) error
 	RecordRequestStat(ctx context.Context, arg RecordRequestStatParams) error
@@ -53,11 +59,16 @@ type Querier interface {
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	RevokeRefreshToken(ctx context.Context, tokenHash []byte) error
 	SetUserEmailVerified(ctx context.Context, id uuid.UUID) error
+	SnapshotSessionsKeyset(ctx context.Context, arg SnapshotSessionsKeysetParams) ([]CubeSession, error)
+	SnapshotSolvesKeyset(ctx context.Context, arg SnapshotSolvesKeysetParams) ([]Solf, error)
+	UpdateDeviceAckCursor(ctx context.Context, arg UpdateDeviceAckCursorParams) error
 	UpdatePasswordCredential(ctx context.Context, arg UpdatePasswordCredentialParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (CubeSession, error)
 	UpdateSolve(ctx context.Context, arg UpdateSolveParams) (Solf, error)
 	UpsertDevice(ctx context.Context, arg UpsertDeviceParams) error
 	UpsertPasswordCredential(ctx context.Context, arg UpsertPasswordCredentialParams) error
+	UserSolveAoN(ctx context.Context, arg UserSolveAoNParams) ([]UserSolveAoNRow, error)
+	UserSolveStats(ctx context.Context, arg UserSolveStatsParams) (UserSolveStatsRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

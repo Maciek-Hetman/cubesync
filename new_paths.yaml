@@ -1,0 +1,88 @@
+  /v1/snapshot:
+    post:
+      summary: Snapshot bootstrap sync
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotRequest"
+      responses:
+        '200':
+          description: Snapshot response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotResponse"
+  /v1/stats:
+    get:
+      summary: Get user statistics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: event
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Statistics response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+  /v1/sessions:
+    get:
+      summary: List sessions paginated
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated sessions response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSessionsResponse"
+  "/v1/sessions/{id}/solves":
+    get:
+      summary: List solves for session paginated
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated solves response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSolvesResponse"
