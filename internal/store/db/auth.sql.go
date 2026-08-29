@@ -158,30 +158,6 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const getIdentityForUserProvider = `-- name: GetIdentityForUserProvider :one
-SELECT id, user_id, provider, subject, email, created_at FROM identities
-WHERE user_id = $1 AND provider = $2
-`
-
-type GetIdentityForUserProviderParams struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Provider string    `json:"provider"`
-}
-
-func (q *Queries) GetIdentityForUserProvider(ctx context.Context, arg GetIdentityForUserProviderParams) (Identity, error) {
-	row := q.db.QueryRow(ctx, getIdentityForUserProvider, arg.UserID, arg.Provider)
-	var i Identity
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Provider,
-		&i.Subject,
-		&i.Email,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getOneTimeTokenForUpdate = `-- name: GetOneTimeTokenForUpdate :one
 SELECT id, user_id, kind, token_hash, expires_at, used_at, created_at FROM one_time_tokens
 WHERE token_hash = $1 AND kind = $2
@@ -402,22 +378,6 @@ WHERE id = $1
 
 func (q *Queries) SetUserEmailVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, setUserEmailVerified, id)
-	return err
-}
-
-const updatePasswordCredential = `-- name: UpdatePasswordCredential :exec
-UPDATE password_credentials
-SET password_hash = $2, updated_at = now()
-WHERE user_id = $1
-`
-
-type UpdatePasswordCredentialParams struct {
-	UserID       uuid.UUID `json:"user_id"`
-	PasswordHash string    `json:"password_hash"`
-}
-
-func (q *Queries) UpdatePasswordCredential(ctx context.Context, arg UpdatePasswordCredentialParams) error {
-	_, err := q.db.Exec(ctx, updatePasswordCredential, arg.UserID, arg.PasswordHash)
 	return err
 }
 

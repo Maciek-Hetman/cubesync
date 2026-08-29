@@ -41,6 +41,7 @@ type FederatedVerifier interface {
 type OIDCVerifier struct {
 	config    config.Config
 	providers map[string]oidcProviderMetadata
+	keySets   map[string]oidc.KeySet
 }
 
 type oidcProviderMetadata struct {
@@ -49,12 +50,19 @@ type oidcProviderMetadata struct {
 }
 
 func NewOIDCVerifier(cfg config.Config) *OIDCVerifier {
+	ctx := context.Background()
+	providers := map[string]oidcProviderMetadata{
+		"google": {issuer: "https://accounts.google.com", jwksURL: "https://www.googleapis.com/oauth2/v3/certs"},
+		"apple":  {issuer: "https://appleid.apple.com", jwksURL: "https://appleid.apple.com/auth/keys"},
+	}
+	keySets := make(map[string]oidc.KeySet, len(providers))
+	for name, p := range providers {
+		keySets[name] = oidc.NewRemoteKeySet(ctx, p.jwksURL)
+	}
 	return &OIDCVerifier{
-		config: cfg,
-		providers: map[string]oidcProviderMetadata{
-			"google": {issuer: "https://accounts.google.com", jwksURL: "https://www.googleapis.com/oauth2/v3/certs"},
-			"apple":  {issuer: "https://appleid.apple.com", jwksURL: "https://appleid.apple.com/auth/keys"},
-		},
+		config:    cfg,
+		providers: providers,
+		keySets:   keySets,
 	}
 }
 
@@ -82,11 +90,14 @@ func (v *OIDCVerifier) Verify(ctx context.Context, provider string, input Federa
 	if !ok {
 		return FederatedIdentity{}, authError("unsupported_provider", "provider must be google or apple")
 	}
-	keySet := oidc.NewRemoteKeySet(ctx, metadata.jwksURL)
+	keySet, ok := v.keySets[provider]
+	if !ok {
+		keySet = oidc.NewRemoteKeySet(ctx, metadata.jwksURL)
+	}
 	verifier := oidc.NewVerifier(metadata.issuer, keySet, &oidc.Config{SkipClientIDCheck: true})
 	token, err := verifier.Verify(ctx, rawToken)
 	if err != nil {
-		return FederatedIdentity{}, authError("invalid_social_token", "identity token is invalid")
+		return FederatedIdentity{}, fmt.Errorf("verify id token: %w", err)
 	}
 	var claims struct {
 		Subject       string           `json:"sub"`
@@ -180,17 +191,6 @@ func (v *OIDCVerifier) allowedClientIDs(provider string) []string {
 		return v.config.AppleClientIDs
 	default:
 		return nil
-	}
-}
-
-func providerMetadata(provider string) (issuer, jwksURL string, err error) {
-	switch provider {
-	case "google":
-		return "https://accounts.google.com", "https://www.googleapis.com/oauth2/v3/certs", nil
-	case "apple":
-		return "https://appleid.apple.com", "https://appleid.apple.com/auth/keys", nil
-	default:
-		return "", "", authError("unsupported_provider", "provider must be google or apple")
 	}
 }
 

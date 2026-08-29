@@ -69,23 +69,6 @@ WHERE bucket_hour >= sqlc.arg(from_time)
 GROUP BY route
 ORDER BY request_count DESC, route;
 
--- name: ListErrorStats :many
-SELECT
-    CASE
-        WHEN sqlc.arg(interval)::text = 'day' THEN date_trunc('day', bucket_hour)
-        ELSE bucket_hour
-    END::timestamptz AS bucket,
-    method,
-    route,
-    status_code,
-    COALESCE(SUM(request_count), 0)::bigint AS request_count
-FROM request_stats_hourly
-WHERE bucket_hour >= sqlc.arg(from_time)
-  AND bucket_hour < sqlc.arg(to_time)
-  AND status_code >= 400
-GROUP BY 1, method, route, status_code
-ORDER BY 1, request_count DESC, method, route, status_code;
-
 -- name: RecordRequestError :exec
 INSERT INTO request_errors (
     user_id, method, route, status_code, code, message

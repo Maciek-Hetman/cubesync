@@ -13,15 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const acquireAdvisoryLock = `-- name: AcquireAdvisoryLock :exec
-SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
-`
-
-func (q *Queries) AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error {
-	_, err := q.db.Exec(ctx, acquireAdvisoryLock, hashtextextended)
-	return err
-}
-
 const acquireAdvisoryLockByID = `-- name: AcquireAdvisoryLockByID :exec
 SELECT pg_advisory_xact_lock($1::bigint)
 `
@@ -118,35 +109,6 @@ func (q *Queries) DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf,
 		&i.SolvedAt,
 		&i.Scramble,
 		&i.Event,
-		&i.Version,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const getLiveSession = `-- name: GetLiveSession :one
-SELECT id, user_id, name, event, kind, started_at, ended_at, archived, version, updated_at, deleted_at FROM cube_sessions
-WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
-`
-
-type GetLiveSessionParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	ID     uuid.UUID `json:"id"`
-}
-
-func (q *Queries) GetLiveSession(ctx context.Context, arg GetLiveSessionParams) (CubeSession, error) {
-	row := q.db.QueryRow(ctx, getLiveSession, arg.UserID, arg.ID)
-	var i CubeSession
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Name,
-		&i.Event,
-		&i.Kind,
-		&i.StartedAt,
-		&i.EndedAt,
-		&i.Archived,
 		&i.Version,
 		&i.UpdatedAt,
 		&i.DeletedAt,

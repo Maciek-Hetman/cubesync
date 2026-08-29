@@ -1,7 +1,7 @@
 .PHONY: build run test test-integration lint generate migrate-up compose-up compose-down
 
 build:
-	go build ./cmd/api
+	go build -o bin/api ./cmd/api
 
 run:
 	go run ./cmd/api serve

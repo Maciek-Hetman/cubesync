@@ -385,16 +385,20 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/StatsFrom"
-        - $ref: "#/components/parameters/StatsTo"
-        - $ref: "#/components/parameters/StatsInterval"
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Cursor for pagination - returns errors before this timestamp
       responses:
         "200":
-          description: Client and server error counts by route
+          description: List of recorded application errors
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AdminErrorStats"
+                $ref: "#/components/schemas/ErrorLogResponse"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -729,39 +733,41 @@ components:
         request_count:
           type: integer
           format: int64
-    AdminErrorStats:
+    ErrorLog:
       type: object
-      required: [from, to, interval, points]
+      required: [id, created_at, method, route, status, code, message]
       properties:
-        from:
+        id:
+          type: integer
+          format: int64
+        created_at:
           type: string
           format: date-time
-        to:
+        user_id:
           type: string
-          format: date-time
-        interval:
-          type: string
-          enum: [hour, day]
-        points:
-          type: array
-          items:
-            $ref: "#/components/schemas/AdminErrorStatsPoint"
-    AdminErrorStatsPoint:
-      type: object
-      required: [bucket, method, route, status_code, request_count]
-      properties:
-        bucket:
-          type: string
-          format: date-time
+          nullable: true
         method:
           type: string
         route:
           type: string
-        status_code:
+        status:
           type: integer
-        request_count:
-          type: integer
-          format: int64
+        code:
+          type: string
+        message:
+          type: string
+    ErrorLogResponse:
+      type: object
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorLog"
+        next_cursor:
+          type: string
+          format: date-time
+          nullable: true
     AuthSession:
       type: object
       required: [access_token, refresh_token, token_type, expires_in, user]

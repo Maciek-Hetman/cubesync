@@ -402,14 +402,18 @@ func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password st
 	if err != nil {
 		return err
 	}
-	return storedb.New(s.pool).UpsertPasswordCredential(ctx, storedb.UpsertPasswordCredentialParams{
+	q := storedb.New(s.pool)
+	if err := q.UpsertPasswordCredential(ctx, storedb.UpsertPasswordCredentialParams{
 		UserID: userID, PasswordHash: hash,
-	})
+	}); err != nil {
+		return err
+	}
+	return q.RevokeAllUserRefreshTokens(ctx, userID)
 }
 
 func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
 	q := storedb.New(s.pool)
-	
+
 	// Check if user has an existing password credential
 	cred, err := q.GetPasswordCredentialByUserID(ctx, userID)
 	if err != nil {
@@ -425,14 +429,13 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 			return authError("invalid_credentials", "incorrect current password")
 		}
 	}
-	
+
 	return s.SetPassword(ctx, userID, newPassword)
 }
 
 func (s *Service) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
 	return storedb.New(s.pool).DeleteUser(ctx, userID)
 }
-
 
 func (s *Service) User(ctx context.Context, userID uuid.UUID) (User, error) {
 	row, err := storedb.New(s.pool).GetUserByID(ctx, userID)

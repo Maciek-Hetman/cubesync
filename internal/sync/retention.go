@@ -2,7 +2,9 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"math"
+	"sync"
 	"time"
 
 	storedb "github.com/Maciek-Hetman/cubing-sync-backend/internal/store/db"
@@ -170,6 +172,8 @@ type RetentionService struct {
 	pool                 *pgxpool.Pool
 	inactiveDeviceWindow time.Duration
 	runInterval          time.Duration
+	logger               *slog.Logger
+	wg                   sync.WaitGroup
 	done                 chan struct{}
 }
 
@@ -179,15 +183,21 @@ func NewRetentionService(pool *pgxpool.Pool, inactiveDeviceWindow, runInterval t
 		pool:                 pool,
 		inactiveDeviceWindow: inactiveDeviceWindow,
 		runInterval:          runInterval,
+		logger:               slog.Default(),
 		done:                 make(chan struct{}),
 	}
-	go s.loop()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.loop()
+	}()
 	return s
 }
 
-// Shutdown signals the retention loop to stop.
+// Shutdown signals the retention loop to stop and waits for in-flight tasks.
 func (s *RetentionService) Shutdown() {
 	close(s.done)
+	s.wg.Wait()
 }
 
 func (s *RetentionService) loop() {
@@ -211,6 +221,9 @@ func (s *RetentionService) runOnce() {
 
 	userIDs, err := q.ListUsersWithChanges(ctx)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("retention_list_users_failed", "error", err)
+		}
 		return
 	}
 
@@ -220,18 +233,30 @@ func (s *RetentionService) runOnce() {
 			UserID:     userID,
 			LastSeenAt: cutoff,
 		})
-		if err != nil || minCursor <= 0 {
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("retention_min_cursor_failed", "user_id", userID, "error", err)
+			}
 			continue
 		}
-		// Prune change_log rows that all active devices have passed.
-		_, _ = q.PruneChangeLog(ctx, storedb.PruneChangeLogParams{
+		if minCursor <= 0 {
+			continue
+		}
+		if _, err := q.PruneChangeLog(ctx, storedb.PruneChangeLogParams{
 			UserID:   userID,
 			ChangeID: minCursor,
-		})
-		// Prune processed_mutations older than the inactive device window.
-		_, _ = q.PruneProcessedMutations(ctx, storedb.PruneProcessedMutationsParams{
+		}); err != nil {
+			if s.logger != nil {
+				s.logger.Error("retention_prune_change_log_failed", "user_id", userID, "error", err)
+			}
+		}
+		if _, err := q.PruneProcessedMutations(ctx, storedb.PruneProcessedMutationsParams{
 			UserID:    userID,
 			CreatedAt: cutoff,
-		})
+		}); err != nil {
+			if s.logger != nil {
+				s.logger.Error("retention_prune_mutations_failed", "user_id", userID, "error", err)
+			}
+		}
 	}
 }

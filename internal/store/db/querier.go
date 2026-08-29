@@ -12,7 +12,6 @@ import (
 )
 
 type Querier interface {
-	AcquireAdvisoryLock(ctx context.Context, hashtextextended string) error
 	AcquireAdvisoryLockByID(ctx context.Context, dollar_1 int64) error
 	AppendChange(ctx context.Context, arg AppendChangeParams) (int64, error)
 	CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (User, error)
@@ -25,8 +24,6 @@ type Querier interface {
 	DeleteSession(ctx context.Context, arg DeleteSessionParams) (CubeSession, error)
 	DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf, error)
 	DeleteUser(ctx context.Context, id uuid.UUID) error
-	GetIdentityForUserProvider(ctx context.Context, arg GetIdentityForUserProviderParams) (Identity, error)
-	GetLiveSession(ctx context.Context, arg GetLiveSessionParams) (CubeSession, error)
 	GetOneTimeTokenForUpdate(ctx context.Context, arg GetOneTimeTokenForUpdateParams) (OneTimeToken, error)
 	GetOverviewStats(ctx context.Context) (GetOverviewStatsRow, error)
 	GetPasswordCredentialByEmail(ctx context.Context, lower string) (GetPasswordCredentialByEmailRow, error)
@@ -43,7 +40,6 @@ type Querier interface {
 	InvalidateUserOneTimeTokens(ctx context.Context, arg InvalidateUserOneTimeTokensParams) error
 	LatestChangeCursor(ctx context.Context, userID uuid.UUID) (int64, error)
 	ListChanges(ctx context.Context, arg ListChangesParams) ([]ChangeLog, error)
-	ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error)
 	ListIndividualErrors(ctx context.Context, arg ListIndividualErrorsParams) ([]RequestError, error)
 	ListRequestStats(ctx context.Context, arg ListRequestStatsParams) ([]ListRequestStatsRow, error)
 	ListRequestStatsByType(ctx context.Context, arg ListRequestStatsByTypeParams) ([]ListRequestStatsByTypeRow, error)
@@ -65,7 +61,6 @@ type Querier interface {
 	SnapshotSessionsKeyset(ctx context.Context, arg SnapshotSessionsKeysetParams) ([]CubeSession, error)
 	SnapshotSolvesKeyset(ctx context.Context, arg SnapshotSolvesKeysetParams) ([]Solf, error)
 	UpdateDeviceAckCursor(ctx context.Context, arg UpdateDeviceAckCursorParams) error
-	UpdatePasswordCredential(ctx context.Context, arg UpdatePasswordCredentialParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (CubeSession, error)
 	UpdateSolve(ctx context.Context, arg UpdateSolveParams) (Solf, error)
 	UpsertDevice(ctx context.Context, arg UpsertDeviceParams) error

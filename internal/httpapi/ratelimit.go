@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,12 +54,34 @@ func (l *ipRateLimiter) evictLoop() {
 	}
 }
 
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			client := strings.TrimSpace(parts[0])
+			if client != "" {
+				if parsed := net.ParseIP(client); parsed != nil {
+					return client
+				}
+			}
+		}
+		if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+			if parsed := net.ParseIP(xrip); parsed != nil {
+				return xrip
+			}
+		}
+	}
+	return host
+}
+
 func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
+		host := clientIP(r)
 		l.mu.Lock()
 		entry, ok := l.visitors[host]
 		if !ok {

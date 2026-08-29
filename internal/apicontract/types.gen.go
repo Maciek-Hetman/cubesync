@@ -19,24 +19,6 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for AdminErrorStatsInterval.
-const (
-	AdminErrorStatsIntervalDay  AdminErrorStatsInterval = "day"
-	AdminErrorStatsIntervalHour AdminErrorStatsInterval = "hour"
-)
-
-// Valid indicates whether the value is a known member of the AdminErrorStatsInterval enum.
-func (e AdminErrorStatsInterval) Valid() bool {
-	switch e {
-	case AdminErrorStatsIntervalDay:
-		return true
-	case AdminErrorStatsIntervalHour:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AdminRequestStatsInterval.
 const (
 	AdminRequestStatsIntervalDay  AdminRequestStatsInterval = "day"
@@ -412,24 +394,6 @@ func (e StatsInterval) Valid() bool {
 	}
 }
 
-// Defines values for GetAdminErrorStatsParamsInterval.
-const (
-	GetAdminErrorStatsParamsIntervalDay  GetAdminErrorStatsParamsInterval = "day"
-	GetAdminErrorStatsParamsIntervalHour GetAdminErrorStatsParamsInterval = "hour"
-)
-
-// Valid indicates whether the value is a known member of the GetAdminErrorStatsParamsInterval enum.
-func (e GetAdminErrorStatsParamsInterval) Valid() bool {
-	switch e {
-	case GetAdminErrorStatsParamsIntervalDay:
-		return true
-	case GetAdminErrorStatsParamsIntervalHour:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for GetAdminRequestTypeStatsParamsInterval.
 const (
 	GetAdminRequestTypeStatsParamsIntervalDay  GetAdminRequestTypeStatsParamsInterval = "day"
@@ -502,24 +466,22 @@ func (e LinkFederatedIdentityParamsProvider) Valid() bool {
 	}
 }
 
-// AdminErrorStats defines model for AdminErrorStats.
-type AdminErrorStats struct {
-	From     time.Time               `json:"from"`
-	Interval AdminErrorStatsInterval `json:"interval"`
-	Points   []AdminErrorStatsPoint  `json:"points"`
-	To       time.Time               `json:"to"`
+// ErrorLog defines model for ErrorLog.
+type ErrorLog struct {
+	Code      string    `json:"code"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        int64     `json:"id"`
+	Message   string    `json:"message"`
+	Method    string    `json:"method"`
+	Route     string    `json:"route"`
+	Status    int       `json:"status"`
+	UserId    *string   `json:"user_id,omitempty"`
 }
 
-// AdminErrorStatsInterval defines model for AdminErrorStats.Interval.
-type AdminErrorStatsInterval string
-
-// AdminErrorStatsPoint defines model for AdminErrorStatsPoint.
-type AdminErrorStatsPoint struct {
-	Bucket       time.Time `json:"bucket"`
-	Method       string    `json:"method"`
-	RequestCount int64     `json:"request_count"`
-	Route        string    `json:"route"`
-	StatusCode   int       `json:"status_code"`
+// ErrorLogResponse defines model for ErrorLogResponse.
+type ErrorLogResponse struct {
+	Errors     []ErrorLog `json:"errors"`
+	NextCursor *time.Time `json:"next_cursor,omitempty"`
 }
 
 // AdminOverviewStats defines model for AdminOverviewStats.
@@ -904,13 +866,9 @@ type StatsTo = time.Time
 
 // GetAdminErrorStatsParams defines parameters for GetAdminErrorStats.
 type GetAdminErrorStatsParams struct {
-	From     *StatsFrom                        `form:"from,omitempty" json:"from,omitempty"`
-	To       *StatsTo                          `form:"to,omitempty" json:"to,omitempty"`
-	Interval *GetAdminErrorStatsParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`
+	// Before Cursor for pagination - returns errors before this timestamp
+	Before *time.Time `form:"before,omitempty" json:"before,omitempty"`
 }
-
-// GetAdminErrorStatsParamsInterval defines parameters for GetAdminErrorStats.
-type GetAdminErrorStatsParamsInterval string
 
 // GetAdminRequestTypeStatsParams defines parameters for GetAdminRequestTypeStats.
 type GetAdminRequestTypeStatsParams struct {

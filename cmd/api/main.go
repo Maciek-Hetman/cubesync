@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/db/migrations"
+	"github.com/Maciek-Hetman/cubing-sync-backend/internal/admin"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/httpapi"
 	syncservice "github.com/Maciek-Hetman/cubing-sync-backend/internal/sync"
@@ -82,12 +83,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	adminSvc := admin.NewService(pool)
+	defer adminSvc.Shutdown()
+
 	retentionSvc := syncservice.NewRetentionService(pool, cfg.InactiveDeviceWindow, cfg.RetentionRunInterval)
 	defer retentionSvc.Shutdown()
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           httpapi.NewRouter(cfg, pool, logger),
+		Handler:           httpapi.NewRouter(cfg, pool, logger, adminSvc),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

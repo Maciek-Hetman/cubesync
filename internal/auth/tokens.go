@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -56,12 +57,15 @@ func (m *TokenManager) ParseAccessToken(raw string) (uuid.UUID, AccessClaims, er
 		}
 		return m.secret, nil
 	}, jwt.WithIssuer(m.issuer), jwt.WithAudience("cubetimer-clients"), jwt.WithExpirationRequired())
-	if err != nil || !token.Valid {
+	if err != nil {
+		return uuid.Nil, AccessClaims{}, fmt.Errorf("parse access token: %w", err)
+	}
+	if !token.Valid {
 		return uuid.Nil, AccessClaims{}, errors.New("invalid access token")
 	}
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return uuid.Nil, AccessClaims{}, errors.New("invalid access token subject")
+		return uuid.Nil, AccessClaims{}, fmt.Errorf("invalid access token subject: %w", err)
 	}
 	if claims.UserRole == "" {
 		claims.UserRole = RoleUser

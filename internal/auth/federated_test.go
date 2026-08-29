@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/config"
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -69,17 +70,14 @@ func TestAppleClientSecret(t *testing.T) {
 	}
 }
 
-func TestProviderMetadata(t *testing.T) {
-	t.Parallel()
-	if _, _, err := providerMetadata("google"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := providerMetadata("apple"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := providerMetadata("unknown"); err == nil {
-		t.Fatal("expected unsupported provider to fail")
-	}
+type inMemoryRoundTripper struct {
+	handler http.Handler
+}
+
+func (rt *inMemoryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	rt.handler.ServeHTTP(rec, req)
+	return rec.Result(), nil
 }
 
 func TestOIDCVerifierWithLocalJWKS(t *testing.T) {
@@ -89,8 +87,10 @@ func TestOIDCVerifierWithLocalJWKS(t *testing.T) {
 		t.Fatal(err)
 	}
 	const keyID = "test-key"
-	var issuer string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	const issuer = "https://accounts.google.test"
+	const jwksURL = "https://accounts.google.test/jwks"
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"keys": []map[string]string{{
 				"kty": "RSA", "kid": keyID, "use": "sig", "alg": "RS256",
@@ -98,12 +98,14 @@ func TestOIDCVerifierWithLocalJWKS(t *testing.T) {
 				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes()),
 			}},
 		})
-	}))
-	defer server.Close()
-	issuer = server.URL
+	})
+	httpClient := &http.Client{Transport: &inMemoryRoundTripper{handler: handler}}
+	ctx := oidc.ClientContext(context.Background(), httpClient)
 
 	verifier := NewOIDCVerifier(config.Config{GoogleClientIDs: []string{"test-client"}})
-	verifier.providers["google"] = oidcProviderMetadata{issuer: issuer, jwksURL: server.URL}
+	verifier.providers["google"] = oidcProviderMetadata{issuer: issuer, jwksURL: jwksURL}
+	verifier.keySets["google"] = oidc.NewRemoteKeySet(ctx, jwksURL)
+
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
 		"iss": issuer, "sub": "provider-user", "aud": "test-client",
@@ -116,7 +118,7 @@ func TestOIDCVerifierWithLocalJWKS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := verifier.Verify(context.Background(), "google", FederatedInput{
+	identity, err := verifier.Verify(ctx, "google", FederatedInput{
 		IDToken: raw, ClientID: "test-client", Nonce: "test-nonce",
 	})
 	if err != nil {
@@ -125,7 +127,7 @@ func TestOIDCVerifierWithLocalJWKS(t *testing.T) {
 	if identity.Subject != "provider-user" || identity.Email != "cube@example.test" || !identity.EmailVerified {
 		t.Fatalf("unexpected identity: %+v", identity)
 	}
-	if _, err := verifier.Verify(context.Background(), "google", FederatedInput{
+	if _, err := verifier.Verify(ctx, "google", FederatedInput{
 		IDToken: raw, ClientID: "test-client", Nonce: "wrong-nonce",
 	}); err == nil {
 		t.Fatal("expected nonce mismatch to fail")

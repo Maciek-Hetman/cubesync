@@ -88,64 +88,6 @@ func (q *Queries) GetOverviewStats(ctx context.Context) (GetOverviewStatsRow, er
 	return i, err
 }
 
-const listErrorStats = `-- name: ListErrorStats :many
-SELECT
-    CASE
-        WHEN $1::text = 'day' THEN date_trunc('day', bucket_hour)
-        ELSE bucket_hour
-    END::timestamptz AS bucket,
-    method,
-    route,
-    status_code,
-    COALESCE(SUM(request_count), 0)::bigint AS request_count
-FROM request_stats_hourly
-WHERE bucket_hour >= $2
-  AND bucket_hour < $3
-  AND status_code >= 400
-GROUP BY 1, method, route, status_code
-ORDER BY 1, request_count DESC, method, route, status_code
-`
-
-type ListErrorStatsParams struct {
-	Interval string    `json:"interval"`
-	FromTime time.Time `json:"from_time"`
-	ToTime   time.Time `json:"to_time"`
-}
-
-type ListErrorStatsRow struct {
-	Bucket       time.Time `json:"bucket"`
-	Method       string    `json:"method"`
-	Route        string    `json:"route"`
-	StatusCode   int32     `json:"status_code"`
-	RequestCount int64     `json:"request_count"`
-}
-
-func (q *Queries) ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error) {
-	rows, err := q.db.Query(ctx, listErrorStats, arg.Interval, arg.FromTime, arg.ToTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListErrorStatsRow{}
-	for rows.Next() {
-		var i ListErrorStatsRow
-		if err := rows.Scan(
-			&i.Bucket,
-			&i.Method,
-			&i.Route,
-			&i.StatusCode,
-			&i.RequestCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listIndividualErrors = `-- name: ListIndividualErrors :many
 SELECT
     id, created_at, user_id, method, route, status_code, code, message

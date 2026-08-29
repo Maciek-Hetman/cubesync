@@ -1,6 +1,3 @@
--- name: AcquireAdvisoryLock :exec
-SELECT pg_advisory_xact_lock(hashtextextended($1, 0));
-
 -- name: AcquireAdvisoryLockByID :exec
 SELECT pg_advisory_xact_lock($1::bigint);
 
@@ -25,10 +22,6 @@ ON CONFLICT (user_id, device_id, mutation_id) DO NOTHING;
 SELECT * FROM cube_sessions
 WHERE user_id = $1 AND id = $2
 FOR UPDATE;
-
--- name: GetLiveSession :one
-SELECT * FROM cube_sessions
-WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL;
 
 -- name: InsertSession :one
 INSERT INTO cube_sessions (

@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -69,5 +71,21 @@ func TestOpaqueTokensAreRandomAndHashStable(t *testing.T) {
 	}
 	if string(firstHash) != string(tokenHash(first)) {
 		t.Fatal("token hash is not stable")
+	}
+}
+
+func TestAccessTokenPreservesExpiredRootError(t *testing.T) {
+	t.Parallel()
+	manager := NewTokenManager([]byte("a-secret-that-is-long-enough-for-tests"), "https://sync.example.test", -1*time.Minute)
+	raw, _, err := manager.IssueAccessToken(uuid.New(), true, RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = manager.ParseAccessToken(raw)
+	if err == nil {
+		t.Fatal("expected expired token to fail")
+	}
+	if !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Fatalf("expected wrapped jwt.ErrTokenExpired, got %v", err)
 	}
 }

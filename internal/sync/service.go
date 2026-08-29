@@ -156,14 +156,10 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 	// req.Cursor is the safe pruning position (the position the server just
 	// returned has not necessarily been applied yet).
 	if req.Cursor > 0 {
-		go func() {
-			qAck := storedb.New(s.pool)
-			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
-				UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
-			})
-		}()
+		qAck := storedb.New(s.pool)
+		_ = qAck.UpdateDeviceAckCursor(ctx, storedb.UpdateDeviceAckCursorParams{
+			UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
+		})
 	}
 
 	return Response{Outcomes: outcomes, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
@@ -194,14 +190,9 @@ func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, l
 	}
 
 	if req.Cursor > 0 {
-		go func() {
-			qAck := storedb.New(s.pool)
-			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = qAck.UpdateDeviceAckCursor(ctx2, storedb.UpdateDeviceAckCursorParams{
-				UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
-			})
-		}()
+		_ = q.UpdateDeviceAckCursor(ctx, storedb.UpdateDeviceAckCursorParams{
+			UserID: userID, ID: req.Device.ID, LastAckCursor: req.Cursor,
+		})
 	}
 
 	return Response{Outcomes: []MutationOutcome{}, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
@@ -285,16 +276,17 @@ func (s *Service) applyMutation(
 	}
 
 	var outcome MutationOutcome
+	var err error
 	switch m.Entity {
 	case "session":
-		outcome = s.applySession(ctx, q, userID, m, protoVersion)
+		outcome, err = s.applySession(ctx, q, userID, m, protoVersion)
 	case "solve":
-		outcome = s.applySolve(ctx, q, userID, m, protoVersion)
+		outcome, err = s.applySolve(ctx, q, userID, m, protoVersion)
 	default:
 		outcome = rejected(m.ID, "invalid_entity", "entity must be session or solve")
 	}
-	if outcome.Status == "internal_error" {
-		return MutationOutcome{}, errors.New(outcome.Message)
+	if err != nil {
+		return MutationOutcome{}, fmt.Errorf("apply mutation: %w", err)
 	}
 
 	if m.ID != uuid.Nil {
@@ -311,50 +303,50 @@ func (s *Service) applyMutation(
 	return outcome, nil
 }
 
-func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
+func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) (MutationOutcome, error) {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
-		return *outcome
+		return *outcome, nil
 	}
 	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "session", m.EntityID.String())); err != nil {
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("acquire session advisory lock: %w", err)
 	}
 	current, currentErr := q.GetSessionForUpdate(ctx, storedb.GetSessionForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
-		return internal(m.ID, currentErr)
+		return MutationOutcome{}, fmt.Errorf("get session for update: %w", currentErr)
 	}
 
 	if m.Operation == "delete" {
 		if errors.Is(currentErr, pgx.ErrNoRows) {
-			return rejected(m.ID, "not_found", "session does not exist")
+			return rejected(m.ID, "not_found", "session does not exist"), nil
 		}
 		if current.Version != m.BaseVersion {
-			return sessionConflict(m.ID, current, protoVersion)
+			return sessionConflict(m.ID, current, protoVersion), nil
 		}
 		deleted, err := q.DeleteSession(ctx, storedb.DeleteSessionParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
 		})
 		if err != nil {
-			return internal(m.ID, err)
+			return MutationOutcome{}, fmt.Errorf("delete session: %w", err)
 		}
 		if err := appendSessionChange(ctx, q, userID, "delete", deleted); err != nil {
-			return internal(m.ID, err)
+			return MutationOutcome{}, fmt.Errorf("append session delete change: %w", err)
 		}
-		return accepted(m.ID, deleted.Version)
+		return accepted(m.ID, deleted.Version), nil
 	}
 
 	var input Session
 	if err := json.Unmarshal(m.Data, &input); err != nil {
-		return rejected(m.ID, "invalid_session", "session data is invalid")
+		return rejected(m.ID, "invalid_session", "session data is invalid"), nil
 	}
 	if message := validateSession(input, m.EntityID); message != "" {
-		return rejected(m.ID, "invalid_session", message)
+		return rejected(m.ID, "invalid_session", message), nil
 	}
 
 	var result storedb.CubeSession
 	var err error
 	if errors.Is(currentErr, pgx.ErrNoRows) {
 		if m.BaseVersion != 0 {
-			return rejected(m.ID, "not_found", "session does not exist")
+			return rejected(m.ID, "not_found", "session does not exist"), nil
 		}
 		result, err = q.InsertSession(ctx, storedb.InsertSessionParams{
 			ID: input.ID, UserID: userID, Name: input.Name, Event: input.Event, Kind: input.Kind,
@@ -362,7 +354,7 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 		})
 	} else {
 		if current.Version != m.BaseVersion {
-			return sessionConflict(m.ID, current, protoVersion)
+			return sessionConflict(m.ID, current, protoVersion), nil
 		}
 		result, err = q.UpdateSession(ctx, storedb.UpdateSessionParams{
 			UserID: userID, ID: input.ID, Name: input.Name, Event: input.Event, Kind: input.Kind,
@@ -370,51 +362,51 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 		})
 	}
 	if err != nil {
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("upsert session: %w", err)
 	}
 	if err := appendSessionChange(ctx, q, userID, "upsert", result); err != nil {
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("append session upsert change: %w", err)
 	}
-	return accepted(m.ID, result.Version)
+	return accepted(m.ID, result.Version), nil
 }
 
-func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) MutationOutcome {
+func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) (MutationOutcome, error) {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
-		return *outcome
+		return *outcome, nil
 	}
 	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "solve", m.EntityID.String())); err != nil {
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("acquire solve advisory lock: %w", err)
 	}
 	current, currentErr := q.GetSolveForUpdate(ctx, storedb.GetSolveForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
-		return internal(m.ID, currentErr)
+		return MutationOutcome{}, fmt.Errorf("get solve for update: %w", currentErr)
 	}
 
 	if m.Operation == "delete" {
 		if errors.Is(currentErr, pgx.ErrNoRows) {
-			return rejected(m.ID, "not_found", "solve does not exist")
+			return rejected(m.ID, "not_found", "solve does not exist"), nil
 		}
 		if current.Version != m.BaseVersion {
-			return solveConflict(m.ID, current, protoVersion)
+			return solveConflict(m.ID, current, protoVersion), nil
 		}
 		deleted, err := q.DeleteSolve(ctx, storedb.DeleteSolveParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
 		})
 		if err != nil {
-			return internal(m.ID, err)
+			return MutationOutcome{}, fmt.Errorf("delete solve: %w", err)
 		}
 		if err := appendSolveChange(ctx, q, userID, "delete", deleted); err != nil {
-			return internal(m.ID, err)
+			return MutationOutcome{}, fmt.Errorf("append solve delete change: %w", err)
 		}
-		return accepted(m.ID, deleted.Version)
+		return accepted(m.ID, deleted.Version), nil
 	}
 
 	var input Solve
 	if err := json.Unmarshal(m.Data, &input); err != nil {
-		return rejected(m.ID, "invalid_solve", "solve data is invalid")
+		return rejected(m.ID, "invalid_solve", "solve data is invalid"), nil
 	}
 	if message := validateSolve(input, m.EntityID); message != "" {
-		return rejected(m.ID, "invalid_solve", message)
+		return rejected(m.ID, "invalid_solve", message), nil
 	}
 	sessionID := uuid.NullUUID{}
 	if input.SessionID != nil {
@@ -425,7 +417,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	var err error
 	if errors.Is(currentErr, pgx.ErrNoRows) {
 		if m.BaseVersion != 0 {
-			return rejected(m.ID, "not_found", "solve does not exist")
+			return rejected(m.ID, "not_found", "solve does not exist"), nil
 		}
 		result, err = q.InsertSolve(ctx, storedb.InsertSolveParams{
 			ID: input.ID, UserID: userID, SessionID: sessionID, DurationMs: input.DurationMS,
@@ -433,7 +425,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		})
 	} else {
 		if current.Version != m.BaseVersion {
-			return solveConflict(m.ID, current, protoVersion)
+			return solveConflict(m.ID, current, protoVersion), nil
 		}
 		result, err = q.UpdateSolve(ctx, storedb.UpdateSolveParams{
 			UserID: userID, ID: input.ID, SessionID: sessionID, DurationMs: input.DurationMS,
@@ -443,14 +435,14 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	}
 	if err != nil {
 		if isForeignKeyViolation(err) {
-			return rejected(m.ID, "invalid_session", "referenced session does not exist")
+			return rejected(m.ID, "invalid_session", "referenced session does not exist"), nil
 		}
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("upsert solve: %w", err)
 	}
 	if err := appendSolveChange(ctx, q, userID, "upsert", result); err != nil {
-		return internal(m.ID, err)
+		return MutationOutcome{}, fmt.Errorf("append solve upsert change: %w", err)
 	}
-	return accepted(m.ID, result.Version)
+	return accepted(m.ID, result.Version), nil
 }
 
 func validateMutationEnvelope(m Mutation) *MutationOutcome {
@@ -597,10 +589,6 @@ func accepted(id uuid.UUID, version int64) MutationOutcome {
 
 func rejected(id uuid.UUID, code, message string) MutationOutcome {
 	return MutationOutcome{MutationID: id, Status: "rejected", Code: code, Message: message}
-}
-
-func internal(id uuid.UUID, err error) MutationOutcome {
-	return MutationOutcome{MutationID: id, Status: "internal_error", Message: "internal server error"}
 }
 
 func isForeignKeyViolation(err error) bool {

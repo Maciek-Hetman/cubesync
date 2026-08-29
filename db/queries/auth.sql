@@ -29,11 +29,6 @@ VALUES ($1, $2)
 ON CONFLICT (user_id) DO UPDATE
 SET password_hash = EXCLUDED.password_hash, updated_at = now();
 
--- name: UpdatePasswordCredential :exec
-UPDATE password_credentials
-SET password_hash = $2, updated_at = now()
-WHERE user_id = $1;
-
 -- name: GetPasswordCredentialByEmail :one
 SELECT u.id, u.email, u.email_verified_at, u.user_role, p.password_hash
 FROM users u
@@ -49,10 +44,6 @@ SELECT u.*
 FROM identities i
 JOIN users u ON u.id = i.user_id
 WHERE i.provider = $1 AND i.subject = $2;
-
--- name: GetIdentityForUserProvider :one
-SELECT * FROM identities
-WHERE user_id = $1 AND provider = $2;
 
 -- name: CreateRefreshToken :exec
 INSERT INTO refresh_tokens (id, family_id, user_id, token_hash, expires_at)

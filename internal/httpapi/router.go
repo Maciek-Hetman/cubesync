@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/admin"
@@ -28,7 +27,13 @@ type Handler struct {
 	stats_    *syncservice.StatsService
 }
 
-func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Handler {
+func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger, adminSvc ...*admin.Service) http.Handler {
+	var adminService *admin.Service
+	if len(adminSvc) > 0 && adminSvc[0] != nil {
+		adminService = adminSvc[0]
+	} else {
+		adminService = admin.NewService(db)
+	}
 	authService := auth.NewService(cfg, db, auth.NewMailer(cfg, logger), auth.NewOIDCVerifier(cfg))
 	h := &Handler{
 		config:    cfg,
@@ -36,7 +41,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 		logger:    logger,
 		auth:      authService,
 		sync:      syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges, cfg.MaxSyncResponseBytes),
-		admin:     admin.NewService(db),
+		admin:     adminService,
 		snapshot_: syncservice.NewSnapshotService(db, cfg.MaxSyncResponseBytes),
 		stats_:    syncservice.NewStatsService(db),
 	}
@@ -133,7 +138,7 @@ func (h *Handler) cors(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Sync-Protocol")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			}
 		}
 		if r.Method == http.MethodOptions {
@@ -203,8 +208,4 @@ func (h *Handler) decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bo
 		return false
 	}
 	return true
-}
-
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
 }
