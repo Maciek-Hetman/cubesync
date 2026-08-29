@@ -51,7 +51,7 @@ sync.example.com.   IN  AAAA  2001:db8::10
 ```
 
 > [!IMPORTANT]
-> Secure mobile clients and Apple Sign-In require a publicly trusted HTTPS certificate. Self-signed certificates or plain HTTP endpoints will be rejected by platform security policies.
+> Secure mobile clients require a publicly trusted HTTPS certificate. Self-signed certificates or plain HTTP endpoints will be rejected by platform security policies.
 
 ### 1.2 Firewall Configuration (UFW)
 Configure the Uncomplicated Firewall (UFW) to allow only necessary ingress traffic while strictly protecting internal container ports:
@@ -140,10 +140,6 @@ LOG_ONE_TIME_LINKS=false
 # --- OAuth Providers (Optional) ---
 GOOGLE_CLIENT_IDS=
 GOOGLE_CLIENT_SECRET=
-APPLE_CLIENT_IDS=
-APPLE_TEAM_ID=
-APPLE_KEY_ID=
-APPLE_PRIVATE_KEY=
 
 # --- Performance & Retention ---
 MAX_SYNC_MUTATIONS=500

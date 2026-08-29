@@ -22,10 +22,6 @@ type Config struct {
 	AllowedOrigins       []string
 	GoogleClientIDs      []string
 	GoogleClientSecret   string
-	AppleClientIDs       []string
-	AppleTeamID          string
-	AppleKeyID           string
-	ApplePrivateKey      string
 	SMTPHost             string
 	SMTPPort             int
 	SMTPUsername         string
@@ -61,10 +57,6 @@ func Load() (Config, error) {
 		AllowedOrigins:       csvEnv("ALLOWED_ORIGINS"),
 		GoogleClientIDs:      csvEnv("GOOGLE_CLIENT_IDS"),
 		GoogleClientSecret:   os.Getenv("GOOGLE_CLIENT_SECRET"),
-		AppleClientIDs:       csvEnv("APPLE_CLIENT_IDS"),
-		AppleTeamID:          os.Getenv("APPLE_TEAM_ID"),
-		AppleKeyID:           os.Getenv("APPLE_KEY_ID"),
-		ApplePrivateKey:      os.Getenv("APPLE_PRIVATE_KEY"),
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             intEnv("SMTP_PORT", 587),
 		SMTPUsername:         os.Getenv("SMTP_USERNAME"),

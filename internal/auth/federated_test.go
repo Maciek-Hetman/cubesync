@@ -2,14 +2,10 @@ package auth
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -38,35 +34,6 @@ func TestParseBooleanClaim(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, test.want)
 			}
 		})
-	}
-}
-
-func TestAppleClientSecret(t *testing.T) {
-	t.Parallel()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifier := NewOIDCVerifier(config.Config{
-		AppleTeamID: "TEAM123", AppleKeyID: "KEY123",
-		ApplePrivateKey: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded})),
-	})
-	raw, err := verifier.appleClientSecret("com.example.cubetimer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := jwt.Parse(raw, func(token *jwt.Token) (any, error) {
-		return &key.PublicKey, nil
-	}, jwt.WithIssuer("TEAM123"), jwt.WithAudience("https://appleid.apple.com"))
-	if err != nil || !parsed.Valid {
-		t.Fatalf("Apple client secret is invalid: %v", err)
-	}
-	if parsed.Header["kid"] != "KEY123" {
-		t.Fatalf("unexpected key id: %v", parsed.Header["kid"])
 	}
 }
 

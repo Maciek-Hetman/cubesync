@@ -18,7 +18,7 @@ CREATE TABLE password_credentials (
 CREATE TABLE identities (
     id uuid PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider text NOT NULL CHECK (provider IN ('google', 'apple')),
+    provider text NOT NULL CHECK (provider IN ('google')),
     subject text NOT NULL,
     email text,
     created_at timestamptz NOT NULL DEFAULT now(),

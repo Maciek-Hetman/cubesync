@@ -8,7 +8,7 @@ A small, self-hosted synchronization API for CubeTimer. Logged-in users can keep
 - PostgreSQL, pgx, and sqlc
 - Goose SQL migrations
 - OpenAPI 3.1 with generated Go contract types
-- Email/password, Google, and Apple authentication
+- Email/password and Google authentication
 - Docker Compose for local or single-VPS deployment
 
 The service does not need Redis or a separate identity server. The required production containers are the API and PostgreSQL.
@@ -86,8 +86,8 @@ The source of truth is [`api/openapi.yaml`](api/openapi.yaml). Main endpoints:
 - `POST /v1/auth/email/verify`
 - `POST /v1/auth/login`
 - `POST /v1/auth/refresh`
-- `POST /v1/auth/federated/{google|apple}`
-- `POST /v1/auth/link/{google|apple}`
+- `POST /v1/auth/federated/google`
+- `POST /v1/auth/link/google`
 - `GET /v1/me`
 - `POST /v1/sync`
 - `GET /v1/admin/stats/overview`
@@ -128,20 +128,9 @@ In development only, `LOG_ONE_TIME_LINKS=true` writes one-time URLs to structure
 
 Create the appropriate Google OAuth clients and put every accepted token audience in the comma-separated `GOOGLE_CLIENT_IDS`. Native apps normally request an ID token for a server/web client ID. Set `GOOGLE_CLIENT_SECRET` when clients send authorization codes for server-side exchange.
 
-### Apple
+Federated authentication requires a nonce. The client must send the same value found in the provider token's `nonce` claim. Verify tokens in the platform SDK first, keep refresh tokens in Keychain/Keystore, and send API access tokens only in the `Authorization: Bearer` header.
 
-Set:
-
-- `APPLE_CLIENT_IDS` to accepted bundle IDs and Services IDs
-- `APPLE_TEAM_ID`
-- `APPLE_KEY_ID`
-- `APPLE_PRIVATE_KEY` to the `.p8` private key
-
-The API generates Apple's short-lived ES256 client secret when exchanging an authorization code.
-
-Both providers require a nonce. The client must send the same value found in the provider token's `nonce` claim. Verify tokens in the platform SDK first, keep refresh tokens in Keychain/Keystore, and send API access tokens only in the `Authorization: Bearer` header.
-
-Accounts are never merged merely because two providers report the same email. Sign in to the existing account and call the authenticated linking endpoint.
+Accounts are never merged merely because Google reports the same email as an existing account. Sign in to the existing account and call the authenticated linking endpoint.
 
 ## Production deployment
 
