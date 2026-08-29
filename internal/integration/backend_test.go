@@ -412,24 +412,52 @@ func testAdminStatistics(
 	from := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	to := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	requestURL := server.URL + "/v1/admin/stats/requests?from=" + from + "&to=" + to + "&interval=hour"
+	typesURL := server.URL + "/v1/admin/stats/request-types?from=" + from + "&to=" + to + "&interval=hour"
+	errorsURL := server.URL + "/v1/admin/stats/errors?from=" + from + "&to=" + to + "&interval=hour"
 	var requests admin.RequestSeries
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		adminGETJSON(t, ctx, requestURL, adminSession.AccessToken, &requests)
-		var total, status2xx, status4xx int64
+	var typeStats admin.RequestTypeSeries
+	var logs admin.ErrorLogResponse
+
+	statsReady := func() bool {
+		var total, status2xx, status4xx, typeTotal int64
 		for _, point := range requests.Points {
 			total += point.RequestCount
 			status2xx += point.Status2xx
 			status4xx += point.Status4xx
 		}
-		if total >= 2 && status2xx >= 1 && status4xx >= 1 {
+		countsByType := make(map[string]int64, len(typeStats.Types))
+		for _, entry := range typeStats.Types {
+			countsByType[entry.Type] += entry.RequestCount
+			typeTotal += entry.RequestCount
+		}
+		foundLogin400 := false
+		for _, log := range logs.Errors {
+			if log.Method == http.MethodPost && log.Route == "/v1/auth/login" && log.Status == http.StatusBadRequest {
+				foundLogin400 = true
+			}
+		}
+		return total >= 2 && status2xx >= 1 && status4xx >= 1 &&
+			countsByType[admin.RequestTypeAuth] >= 1 &&
+			countsByType[admin.RequestTypeAccount] >= 1 &&
+			countsByType[admin.RequestTypeOther] >= 1 &&
+			typeTotal == total &&
+			foundLogin400
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		adminGETJSON(t, ctx, requestURL, adminSession.AccessToken, &requests)
+		adminGETJSON(t, ctx, typesURL, adminSession.AccessToken, &typeStats)
+		adminGETJSON(t, ctx, errorsURL, adminSession.AccessToken, &logs)
+		if statsReady() {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("expected recorded application requests: %+v", requests)
+			t.Fatalf("expected recorded application requests: %+v, request types: %+v, errors: %+v", requests, typeStats, logs)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+
 	var total, status2xx, status4xx int64
 	for _, point := range requests.Points {
 		total += point.RequestCount
@@ -443,9 +471,6 @@ func testAdminStatistics(
 		t.Fatalf("expected recorded application requests: %+v", requests)
 	}
 
-	typesURL := server.URL + "/v1/admin/stats/request-types?from=" + from + "&to=" + to + "&interval=hour"
-	var typeStats admin.RequestTypeSeries
-	adminGETJSON(t, ctx, typesURL, adminSession.AccessToken, &typeStats)
 	countsByType := make(map[string]int64, len(typeStats.Types))
 	var typeTotal int64
 	for _, entry := range typeStats.Types {
@@ -462,9 +487,6 @@ func testAdminStatistics(
 		t.Fatalf("request type total %d does not match request stats total %d", typeTotal, total)
 	}
 
-	errorsURL := server.URL + "/v1/admin/stats/errors?from=" + from + "&to=" + to + "&interval=hour"
-	var logs admin.ErrorLogResponse
-	adminGETJSON(t, ctx, errorsURL, adminSession.AccessToken, &logs)
 	foundLogin400 := false
 	for _, log := range logs.Errors {
 		if log.Method == http.MethodPost && log.Route == "/v1/auth/login" && log.Status == http.StatusBadRequest {
