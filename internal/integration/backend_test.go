@@ -412,14 +412,23 @@ func testAdminStatistics(
 	from := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	to := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	requestURL := server.URL + "/v1/admin/stats/requests?from=" + from + "&to=" + to + "&interval=hour"
-	requestsResp := adminGET(t, ctx, requestURL, adminSession.AccessToken)
-	defer requestsResp.Body.Close()
-	if requestsResp.StatusCode != http.StatusOK {
-		t.Fatalf("admin request stats returned %d", requestsResp.StatusCode)
-	}
 	var requests admin.RequestSeries
-	if err := json.NewDecoder(requestsResp.Body).Decode(&requests); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		adminGETJSON(t, ctx, requestURL, adminSession.AccessToken, &requests)
+		var total, status2xx, status4xx int64
+		for _, point := range requests.Points {
+			total += point.RequestCount
+			status2xx += point.Status2xx
+			status4xx += point.Status4xx
+		}
+		if total >= 2 && status2xx >= 1 && status4xx >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected recorded application requests: %+v", requests)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	var total, status2xx, status4xx int64
 	for _, point := range requests.Points {
@@ -435,15 +444,8 @@ func testAdminStatistics(
 	}
 
 	typesURL := server.URL + "/v1/admin/stats/request-types?from=" + from + "&to=" + to + "&interval=hour"
-	typesResp := adminGET(t, ctx, typesURL, adminSession.AccessToken)
-	defer typesResp.Body.Close()
-	if typesResp.StatusCode != http.StatusOK {
-		t.Fatalf("admin request type stats returned %d", typesResp.StatusCode)
-	}
 	var typeStats admin.RequestTypeSeries
-	if err := json.NewDecoder(typesResp.Body).Decode(&typeStats); err != nil {
-		t.Fatal(err)
-	}
+	adminGETJSON(t, ctx, typesURL, adminSession.AccessToken, &typeStats)
 	countsByType := make(map[string]int64, len(typeStats.Types))
 	var typeTotal int64
 	for _, entry := range typeStats.Types {
@@ -461,15 +463,8 @@ func testAdminStatistics(
 	}
 
 	errorsURL := server.URL + "/v1/admin/stats/errors?from=" + from + "&to=" + to + "&interval=hour"
-	errorsResp := adminGET(t, ctx, errorsURL, adminSession.AccessToken)
-	defer errorsResp.Body.Close()
-	if errorsResp.StatusCode != http.StatusOK {
-		t.Fatalf("admin error stats returned %d", errorsResp.StatusCode)
-	}
 	var logs admin.ErrorLogResponse
-	if err := json.NewDecoder(errorsResp.Body).Decode(&logs); err != nil {
-		t.Fatal(err)
-	}
+	adminGETJSON(t, ctx, errorsURL, adminSession.AccessToken, &logs)
 	foundLogin400 := false
 	for _, log := range logs.Errors {
 		if log.Method == http.MethodPost && log.Route == "/v1/auth/login" && log.Status == http.StatusBadRequest {
@@ -496,6 +491,18 @@ func adminGET(t *testing.T, ctx context.Context, url, token string) *http.Respon
 		t.Fatal(err)
 	}
 	return response
+}
+
+func adminGETJSON(t *testing.T, ctx context.Context, url, token string, dst any) {
+	t.Helper()
+	response := adminGET(t, ctx, url, token)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("admin endpoint returned %d", response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(dst); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runMigrations(t *testing.T, databaseURL string) {
