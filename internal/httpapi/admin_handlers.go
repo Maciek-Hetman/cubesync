@@ -32,6 +32,19 @@ func (h *Handler) adminRequestStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, series)
 }
 
+func (h *Handler) adminRequestTypeStats(w http.ResponseWriter, r *http.Request) {
+	query, ok := h.parseStatsRange(w, r)
+	if !ok {
+		return
+	}
+	series, err := h.admin.RequestTypeStats(r.Context(), query)
+	if err != nil {
+		h.writeAdminError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, series)
+}
+
 func (h *Handler) adminErrorStats(w http.ResponseWriter, r *http.Request) {
 	beforeStr := r.URL.Query().Get("before")
 	var before time.Time

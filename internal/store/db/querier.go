@@ -46,6 +46,7 @@ type Querier interface {
 	ListErrorStats(ctx context.Context, arg ListErrorStatsParams) ([]ListErrorStatsRow, error)
 	ListIndividualErrors(ctx context.Context, arg ListIndividualErrorsParams) ([]RequestError, error)
 	ListRequestStats(ctx context.Context, arg ListRequestStatsParams) ([]ListRequestStatsRow, error)
+	ListRequestStatsByType(ctx context.Context, arg ListRequestStatsByTypeParams) ([]ListRequestStatsByTypeRow, error)
 	ListSessionsPaginated(ctx context.Context, arg ListSessionsPaginatedParams) ([]ListSessionsPaginatedRow, error)
 	ListSolvesForSessionPaginated(ctx context.Context, arg ListSolvesForSessionPaginatedParams) ([]Solf, error)
 	ListUsersWithChanges(ctx context.Context) ([]uuid.UUID, error)

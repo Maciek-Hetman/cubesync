@@ -59,6 +59,16 @@ WHERE bucket_hour >= sqlc.arg(from_time) AND bucket_hour < sqlc.arg(to_time)
 GROUP BY 1
 ORDER BY 1;
 
+-- name: ListRequestStatsByType :many
+SELECT
+    route,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count
+FROM request_stats_hourly
+WHERE bucket_hour >= sqlc.arg(from_time)
+  AND bucket_hour < sqlc.arg(to_time)
+GROUP BY route
+ORDER BY request_count DESC, route;
+
 -- name: ListErrorStats :many
 SELECT
     CASE

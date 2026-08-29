@@ -56,3 +56,30 @@ func TestNormalizeRouteUsesUnmatchedLabel(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestRequestTypeForRoute(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		route string
+		want  string
+	}{
+		{"/v1/auth/login", RequestTypeAuth},
+		{"/v1/auth/refresh", RequestTypeAuth},
+		{"/v1/me", RequestTypeAccount},
+		{"/v1/me/password", RequestTypeAccount},
+		{"/v1/sync", RequestTypeSync},
+		{"/v1/snapshot", RequestTypeSnapshot},
+		{"/v1/sessions", RequestTypeSessions},
+		{"/v1/sessions/{id}/solves", RequestTypeSessions},
+		{"/v1/stats", RequestTypeStats},
+		{"/v1", RequestTypeOther},
+		{"", RequestTypeOther},
+		{"/unknown", RequestTypeOther},
+		{"/v1/auth", RequestTypeOther},
+	}
+	for _, tc := range cases {
+		if got := requestTypeForRoute(tc.route); got != tc.want {
+			t.Errorf("requestTypeForRoute(%q) = %q, want %q", tc.route, got, tc.want)
+		}
+	}
+}

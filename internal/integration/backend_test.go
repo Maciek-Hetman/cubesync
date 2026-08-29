@@ -434,6 +434,32 @@ func testAdminStatistics(
 		t.Fatalf("expected recorded application requests: %+v", requests)
 	}
 
+	typesURL := server.URL + "/v1/admin/stats/request-types?from=" + from + "&to=" + to + "&interval=hour"
+	typesResp := adminGET(t, ctx, typesURL, adminSession.AccessToken)
+	defer typesResp.Body.Close()
+	if typesResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin request type stats returned %d", typesResp.StatusCode)
+	}
+	var typeStats admin.RequestTypeSeries
+	if err := json.NewDecoder(typesResp.Body).Decode(&typeStats); err != nil {
+		t.Fatal(err)
+	}
+	countsByType := make(map[string]int64, len(typeStats.Types))
+	var typeTotal int64
+	for _, entry := range typeStats.Types {
+		if entry.RequestCount <= 0 {
+			t.Fatalf("non-positive request count for type %q: %+v", entry.Type, typeStats)
+		}
+		countsByType[entry.Type] += entry.RequestCount
+		typeTotal += entry.RequestCount
+	}
+	if countsByType[admin.RequestTypeAuth] < 1 || countsByType[admin.RequestTypeAccount] < 1 || countsByType[admin.RequestTypeOther] < 1 {
+		t.Fatalf("expected auth, account and other request types: %+v", typeStats)
+	}
+	if typeTotal != total {
+		t.Fatalf("request type total %d does not match request stats total %d", typeTotal, total)
+	}
+
 	errorsURL := server.URL + "/v1/admin/stats/errors?from=" + from + "&to=" + to + "&interval=hour"
 	errorsResp := adminGET(t, ctx, errorsURL, adminSession.AccessToken)
 	defer errorsResp.Body.Close()

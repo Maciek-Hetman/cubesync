@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +18,16 @@ const (
 	maxRange        = 90 * 24 * time.Hour
 	IntervalHour    = "hour"
 	IntervalDay     = "day"
+)
+
+const (
+	RequestTypeAuth     = "auth"
+	RequestTypeAccount  = "account"
+	RequestTypeSync     = "sync"
+	RequestTypeSnapshot = "snapshot"
+	RequestTypeSessions = "sessions"
+	RequestTypeStats    = "stats"
+	RequestTypeOther    = "other"
 )
 
 type metric struct {
@@ -86,6 +97,18 @@ type QueryRange struct {
 	From     time.Time
 	To       time.Time
 	Interval string
+}
+
+type RequestTypeCount struct {
+	Type         string `json:"type"`
+	RequestCount int64  `json:"request_count"`
+}
+
+type RequestTypeSeries struct {
+	From     time.Time          `json:"from"`
+	To       time.Time          `json:"to"`
+	Interval string             `json:"interval"`
+	Types    []RequestTypeCount `json:"types"`
 }
 
 type Error struct {
@@ -261,6 +284,40 @@ func (s *Service) RequestStats(ctx context.Context, query QueryRange) (RequestSe
 	}, nil
 }
 
+func (s *Service) RequestTypeStats(ctx context.Context, query QueryRange) (RequestTypeSeries, error) {
+	resolved, err := resolveRange(s.now().UTC(), query)
+	if err != nil {
+		return RequestTypeSeries{}, err
+	}
+	rows, err := storedb.New(s.pool).ListRequestStatsByType(ctx, storedb.ListRequestStatsByTypeParams{
+		FromTime: resolved.From,
+		ToTime:   resolved.To,
+	})
+	if err != nil {
+		return RequestTypeSeries{}, err
+	}
+	counts := make(map[string]int64)
+	for _, row := range rows {
+		counts[requestTypeForRoute(row.Route)] += row.RequestCount
+	}
+	types := make([]RequestTypeCount, 0, len(counts))
+	for requestType, count := range counts {
+		types = append(types, RequestTypeCount{Type: requestType, RequestCount: count})
+	}
+	sort.Slice(types, func(i, j int) bool {
+		if types[i].RequestCount == types[j].RequestCount {
+			return types[i].Type < types[j].Type
+		}
+		return types[i].RequestCount > types[j].RequestCount
+	})
+	return RequestTypeSeries{
+		From:     resolved.From,
+		To:       resolved.To,
+		Interval: resolved.Interval,
+		Types:    types,
+	}, nil
+}
+
 func (s *Service) ListErrors(ctx context.Context, before time.Time, limit int) (ErrorLogResponse, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -370,4 +427,23 @@ func normalizeRoute(route string) string {
 		return unmatchedRoute
 	}
 	return route
+}
+
+func requestTypeForRoute(route string) string {
+	switch {
+	case strings.HasPrefix(route, "/v1/auth/"):
+		return RequestTypeAuth
+	case strings.HasPrefix(route, "/v1/me"):
+		return RequestTypeAccount
+	case route == "/v1/sync":
+		return RequestTypeSync
+	case route == "/v1/snapshot":
+		return RequestTypeSnapshot
+	case strings.HasPrefix(route, "/v1/sessions"):
+		return RequestTypeSessions
+	case strings.HasPrefix(route, "/v1/stats"):
+		return RequestTypeStats
+	default:
+		return RequestTypeOther
+	}
 }

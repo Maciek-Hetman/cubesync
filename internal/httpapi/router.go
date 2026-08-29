@@ -89,6 +89,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Ha
 			r.Use(h.requireAdmin)
 			r.Get("/v1/admin/stats/overview", h.adminOverview)
 			r.Get("/v1/admin/stats/requests", h.adminRequestStats)
+			r.Get("/v1/admin/stats/request-types", h.adminRequestTypeStats)
 			r.Get("/v1/admin/stats/errors", h.adminErrorStats)
 		})
 	})

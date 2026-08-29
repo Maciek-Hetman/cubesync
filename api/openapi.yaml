@@ -355,6 +355,29 @@ paths:
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
+  /v1/admin/stats/request-types:
+    get:
+      operationId: getAdminRequestTypeStats
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StatsFrom"
+        - $ref: "#/components/parameters/StatsTo"
+        - $ref: "#/components/parameters/StatsInterval"
+      responses:
+        "200":
+          description: Request counts grouped by request type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRequestTypeStats"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
   /v1/admin/stats/errors:
     get:
       operationId: getAdminErrorStats
@@ -677,6 +700,33 @@ components:
           type: number
           format: double
         max_duration_ms:
+          type: integer
+          format: int64
+    AdminRequestTypeStats:
+      type: object
+      required: [from, to, interval, types]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        interval:
+          type: string
+          enum: [hour, day]
+        types:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminRequestTypeCount"
+    AdminRequestTypeCount:
+      type: object
+      required: [type, request_count]
+      properties:
+        type:
+          type: string
+          enum: [auth, account, sync, snapshot, sessions, stats, other]
+        request_count:
           type: integer
           format: int64
     AdminErrorStats:

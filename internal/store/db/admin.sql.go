@@ -254,6 +254,47 @@ func (q *Queries) ListRequestStats(ctx context.Context, arg ListRequestStatsPara
 	return items, nil
 }
 
+const listRequestStatsByType = `-- name: ListRequestStatsByType :many
+SELECT
+    route,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count
+FROM request_stats_hourly
+WHERE bucket_hour >= $1
+  AND bucket_hour < $2
+GROUP BY route
+ORDER BY request_count DESC, route
+`
+
+type ListRequestStatsByTypeParams struct {
+	FromTime time.Time `json:"from_time"`
+	ToTime   time.Time `json:"to_time"`
+}
+
+type ListRequestStatsByTypeRow struct {
+	Route        string `json:"route"`
+	RequestCount int64  `json:"request_count"`
+}
+
+func (q *Queries) ListRequestStatsByType(ctx context.Context, arg ListRequestStatsByTypeParams) ([]ListRequestStatsByTypeRow, error) {
+	rows, err := q.db.Query(ctx, listRequestStatsByType, arg.FromTime, arg.ToTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestStatsByTypeRow{}
+	for rows.Next() {
+		var i ListRequestStatsByTypeRow
+		if err := rows.Scan(&i.Route, &i.RequestCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordRequestError = `-- name: RecordRequestError :exec
 INSERT INTO request_errors (
     user_id, method, route, status_code, code, message
