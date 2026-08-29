@@ -18,7 +18,7 @@ lint:
 
 generate:
 	go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
-	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 --config api/oapi-codegen.yaml api/openapi.yaml
+	GOTOOLCHAIN=go1.26.0 go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 --config api/oapi-codegen.yaml api/openapi.yaml
 
 migrate-up:
 	go run ./cmd/api migrate
