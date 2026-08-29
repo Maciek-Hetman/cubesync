@@ -145,15 +145,15 @@ Accounts are never merged merely because two providers report the same email. Si
 
 ## Production deployment
 
-See [`docs/deployment.md`](docs/deployment.md) for VPS setup, HTTPS, secrets, upgrades, and PostgreSQL backup/restore. A host-level Caddy example is provided in [`deploy/Caddyfile`](deploy/Caddyfile).
+See [`docs/deployment.md`](docs/deployment.md) for VPS setup, HTTPS, secrets, upgrades, and PostgreSQL backup/restore. The production stack runs PostgreSQL, the Go API, and Caddy (configured via [`deploy/Caddyfile`](deploy/Caddyfile)) entirely within Docker Compose.
 
 Minimum operational requirements:
 
-1. Set `APP_ENV=production`.
+1. Set `APP_ENV=production` and `DOMAIN=sync.example.com`.
 2. Generate `JWT_SECRET` with `openssl rand -base64 48`.
 3. Set `LOG_ONE_TIME_LINKS=false` and configure SMTP.
 4. Bind the API to loopback with `API_BIND=127.0.0.1`.
-5. Put Caddy or another trusted reverse proxy in front and expose only HTTPS.
+5. Expose HTTPS (ports 80/443) via the included Caddy container.
 6. Back up the PostgreSQL volume regularly and test restoration.
 
 ## Data ownership and privacy

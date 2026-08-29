@@ -1,4 +1,21 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-sync.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
@@ -38,7 +55,7 @@ services:
       HTTP_ADDRESS: :43781
       JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
     ports:
-      - "${API_BIND:-0.0.0.0}:${API_PORT:-43781}:43781"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-43781}:43781"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -57,3 +74,6 @@ services:
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
+

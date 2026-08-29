@@ -2,27 +2,29 @@
 
 This guide is an end-to-end production deployment runbook for self-hosting **CubeSync** on a single Linux Virtual Private Server (VPS). 
 
-The target topology runs PostgreSQL 18 and the CubeSync API as isolated Docker containers via Docker Compose, with Caddy running natively on the host to manage TLS certificates, terminate HTTPS, and reverse-proxy traffic to the API bound on the local loopback interface (`127.0.0.1:43781`).
+The entire production stack—PostgreSQL 18, the CubeSync Go API daemon, database migration engine, and Caddy reverse proxy (with automated TLS termination)—runs in isolated containers managed by **Docker Compose**.
 
 ```
-                              +-------------------------------------------+
-                              |              Linux VPS (Host)             |
-                              |                                           |
-[ Internet Clients ] -------->| :80, :443 (Caddy Reverse Proxy + AutoTLS) |
-(Android / iOS / Web)  HTTPS  |                      |                    |
-                              |                      v HTTP (Loopback)    |
-                              |              127.0.0.1:43781              |
-                              |                      |                    |
-                              |  [ Docker Network ]  v                    |
-                              |  +-------------------------------------+  |
-                              |  | api (CubeSync Go Daemon)            |  |
-                              |  +-------------------------------------+  |
-                              |                      |                    |
-                              |                      v :5432 (Internal)   |
-                              |  +-------------------------------------+  |
-                              |  | postgres:18-alpine (Persistent DB)  |  |
-                              |  +-------------------------------------+  |
-                              +-------------------------------------------+
+                              +-------------------------------------------------+
+                              |                 Linux VPS (Host)                |
+                              |                                                 |
+[ Internet Clients ] -------->| :80, :443, :443/udp (Public Ingress)            |
+(Android / iOS / Web)  HTTPS  |                      |                          |
+                              |  [ Docker Bridge Network ]                      |
+                              |  +-------------------------------------------+  |
+                              |  | caddy:2-alpine (Auto Let's Encrypt / TLS) |  |
+                              |  +-------------------------------------------+  |
+                              |                      |                          |
+                              |                      v HTTP (Internal Bridge)   |
+                              |  +-------------------------------------------+  |
+                              |  | api:43781 (CubeSync Go Daemon)            |  |
+                              |  +-------------------------------------------+  |
+                              |                      |                          |
+                              |                      v :5432 (Internal Bridge)  |
+                              |  +-------------------------------------------+  |
+                              |  | postgres:18-alpine (Persistent Volume)    |  |
+                              |  +-------------------------------------------+  |
+                              +-------------------------------------------------+
 ```
 
 ---
@@ -34,7 +36,7 @@ For a small to medium self-hosted instance (up to several thousand active users)
 - **CPU**: 1 vCPU (x86_64 or ARM64)
 - **RAM**: 1 GB minimum (2 GB recommended for comfortable PostgreSQL buffer caching)
 - **Disk**: 15–25 GB SSD/NVMe (PostgreSQL WAL, solve history, and local backup snapshots)
-- **OS**: Modern Linux distribution (Ubuntu 22.04/24.04 LTS, Debian 12, Rocky Linux 9, or AlmaLinux 9)
+- **OS**: Modern Linux distribution with Docker Engine & Compose v2 installed (Ubuntu 22.04/24.04 LTS, Debian 12, Rocky Linux 9, or AlmaLinux 9)
 
 ---
 
@@ -52,7 +54,7 @@ sync.example.com.   IN  AAAA  2001:db8::10
 > Secure mobile clients and Apple Sign-In require a publicly trusted HTTPS certificate. Self-signed certificates or plain HTTP endpoints will be rejected by platform security policies.
 
 ### 1.2 Firewall Configuration (UFW)
-Configure the Uncomplicated Firewall (UFW) to allow only necessary ingress traffic while strictly protecting PostgreSQL and internal API ports:
+Configure the Uncomplicated Firewall (UFW) to allow only necessary ingress traffic while strictly protecting internal container ports:
 
 ```bash
 # Set default policies
@@ -62,9 +64,10 @@ sudo ufw default allow outgoing
 # Allow SSH (adjust port if running a custom SSH port)
 sudo ufw allow 22/tcp comment "SSH"
 
-# Allow HTTP and HTTPS for Caddy
+# Allow HTTP and HTTPS (TCP and UDP for HTTP/3) for the Caddy container
 sudo ufw allow 80/tcp comment "Caddy HTTP ACME Challenge"
 sudo ufw allow 443/tcp comment "Caddy HTTPS"
+sudo ufw allow 443/udp comment "Caddy HTTP/3 (QUIC)"
 
 # Enable firewall
 sudo ufw enable
@@ -78,19 +81,20 @@ Verify that port `5432` (PostgreSQL) and port `43781` (CubeSync API) are **never
 ## Step 2: Host Directory and Environment Setup
 
 ### 2.1 Directory Layout
-Create a dedicated deployment directory for CubeSync:
+Create a dedicated deployment directory for CubeSync and its configuration files:
 
 ```bash
-sudo mkdir -p /opt/cubesync
+sudo mkdir -p /opt/cubesync/deploy
 sudo chown -R "$USER":"$USER" /opt/cubesync
 cd /opt/cubesync
 ```
 
-### 2.2 Download Docker Compose Configuration
-Download the official `compose.yaml`:
+### 2.2 Download Deployment Files
+Download `compose.yaml` and `deploy/Caddyfile`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Maciek-Hetman/cubesync/main/compose.yaml -o compose.yaml
+curl -fsSL https://raw.githubusercontent.com/Maciek-Hetman/cubesync/main/deploy/Caddyfile -o deploy/Caddyfile
 ```
 
 ### 2.3 Configure Production Environment (`.env`)
@@ -102,12 +106,15 @@ cat << 'EOF' > /opt/cubesync/.env
 APP_ENV=production
 CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.1.0
 
-# --- Network & URLs ---
-API_BIND=127.0.0.1
-API_PORT=43781
+# --- Domain & Reverse Proxy ---
+DOMAIN=sync.example.com
 PUBLIC_URL=https://sync.example.com
 CLIENT_URL=cubetimer://auth
 ALLOWED_ORIGINS=https://timer.example.com
+
+# --- Internal Networking ---
+API_BIND=127.0.0.1
+API_PORT=43781
 
 # --- Database & Secrets ---
 # Replace with a strong random string (e.g. openssl rand -hex 24)
@@ -155,25 +162,25 @@ chmod 600 /opt/cubesync/.env
 
 ---
 
-## Step 3: First Boot & Database Migration
+## Step 3: First Boot & Service Verification
 
 ### 3.1 Pull Container Images
-Authenticate with GitHub Container Registry (if using private package builds) and pull the pinned image:
+Authenticate with GitHub Container Registry (if using private package builds) and pull the pinned images:
 
 ```bash
 cd /opt/cubesync
 docker compose pull
 ```
 
-### 3.2 Launch the Service Stack
-Start PostgreSQL, the database migration service, and the API daemon:
+### 3.2 Launch the Complete Stack
+Start PostgreSQL, the migration runner, the API daemon, and the Caddy reverse proxy:
 
 ```bash
 docker compose up -d
 ```
 
 ### 3.3 Verify Container Status & Migration Logs
-Check that all containers are healthy and that the one-shot `migrate` container finished cleanly:
+Check that all containers are running and that the one-shot `migrate` container completed successfully:
 
 ```bash
 docker compose ps
@@ -185,17 +192,23 @@ Expected output for `migrate`:
 cubesync-migrate-1  | {"time":"...","level":"INFO","msg":"migration_complete"}
 ```
 
-### 3.4 Verify Internal Loopback Health
-Test the API's readiness endpoint directly through the local loopback port:
+### 3.4 Verify Public HTTPS Availability
+Caddy automatically contacts Let's Encrypt / ZeroSSL, solves the ACME HTTP-01/TLS-ALPN-01 challenge, acquires a certificate, and begins serving HTTPS.
+
+Test the public health endpoint:
 
 ```bash
-curl -s http://127.0.0.1:43781/health/ready
+curl -i https://sync.example.com/health/ready
 ```
 
-Expected response:
+Expected HTTP status: `HTTP/2 200` with body:
 ```json
 {"status":"ready"}
 ```
+
+> [!NOTE]
+> **Rate Limiting & Trusted Reverse Proxying**:
+> In `deploy/Caddyfile`, Caddy forwards `X-Forwarded-For` and `X-Real-IP` to `reverse_proxy api:43781`. The Go backend's `clientIP()` middleware recognizes Docker's private bridge subnet (`172.16.0.0/12`) as a trusted proxy, extracting the genuine public client IP to enforce per-IP authentication rate limits (10 req/min with burst of 5) without allowing direct header spoofing.
 
 ---
 
@@ -221,74 +234,9 @@ The newly created admin can immediately authenticate via `POST /v1/auth/login`.
 
 ---
 
-## Step 5: Host HTTPS Reverse Proxy with Caddy
+## Step 5: Automated Backups & Disaster Recovery
 
-Caddy provides automated Let's Encrypt / ZeroSSL TLS certificate issuance, automatic renewals, HTTP-to-HTTPS redirects, and high-performance HTTP/2 and HTTP/3 support.
-
-### 5.1 Install Caddy
-Install Caddy on Debian/Ubuntu:
-
-```bash
-sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLF 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLF 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt-get update
-sudo apt-get install -y caddy
-```
-
-### 5.2 Configure `/etc/caddy/Caddyfile`
-Create the hardened reverse proxy configuration:
-
-```caddy
-sync.example.com {
-    # Compression for responses
-    encode zstd gzip
-
-    # Reverse proxy to the CubeSync API container loopback port
-    reverse_proxy 127.0.0.1:43781 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-    }
-
-    # Security Response Headers
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        -Server
-    }
-}
-```
-
-> [!NOTE]
-> **Reverse Proxy & Rate Limiting Trust**:
-> The CubeSync API inspects `X-Forwarded-For` and `X-Real-IP` headers only when requests originate from trusted loopback/private proxy addresses (such as Caddy connecting from `127.0.0.1`). Direct public connections cannot spoof client IP headers because `API_BIND=127.0.0.1` and the firewall block direct access.
-
-### 5.3 Validate and Reload Caddy
-Validate syntax and reload the systemd service:
-
-```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
-
-### 5.4 Verify Public HTTPS Endpoint
-Check public availability:
-
-```bash
-curl -i https://sync.example.com/health/ready
-```
-
-Expected HTTP status: `HTTP/2 200` with body `{"status":"ready"}`.
-
----
-
-## Step 6: Automated Backups & Disaster Recovery
-
-### 6.1 Automated Backup Script
+### 5.1 Automated Backup Script
 Create an automated backup script at `/opt/cubesync/backup.sh`:
 
 ```bash
@@ -320,7 +268,7 @@ EOF
 chmod 700 /opt/cubesync/backup.sh
 ```
 
-### 6.2 Configure Automated Systemd Timer
+### 5.2 Configure Automated Systemd Timer
 Set up a daily systemd service and timer to execute the backup at 03:00 UTC:
 
 1. Create `/etc/systemd/system/cubesync-backup.service`:
@@ -356,7 +304,7 @@ sudo systemctl enable --now cubesync-backup.timer
 sudo systemctl list-timers cubesync-backup.timer
 ```
 
-### 6.3 Offsite Backup Replication (Recommended)
+### 5.3 Offsite Backup Replication (Recommended)
 Sync `/var/backups/cubesync` offsite using `rclone`, AWS S3, or `rsync` over SSH:
 
 ```bash
@@ -364,7 +312,7 @@ Sync `/var/backups/cubesync` offsite using `rclone`, AWS S3, or `rsync` over SSH
 # rclone sync /var/backups/cubesync remote:cubesync-backups
 ```
 
-### 6.4 Backup Restoration & Disaster Recovery Drill
+### 5.4 Backup Restoration & Disaster Recovery Drill
 
 Test backup restoration non-destructively into a temporary database:
 
@@ -387,20 +335,20 @@ docker compose exec -T postgres dropdb -U cubetimer cubetimer_test_restore
 ```
 
 In a total server loss disaster scenario:
-1. Provision a new VPS following Steps 1–3.
+1. Provision a new VPS following Steps 1–2.
 2. Place the latest `.dump` file on the server.
 3. Start only PostgreSQL: `docker compose up -d postgres`.
 4. Restore data into the primary database:
    ```bash
    docker compose exec -T postgres pg_restore -U cubetimer -d cubetimer --clean --if-exists < latest.dump
    ```
-5. Start the remaining services: `docker compose up -d`.
+5. Start the full stack: `docker compose up -d`.
 
 ---
 
-## Step 7: Upgrades, Rollbacks & Maintenance
+## Step 6: Upgrades, Rollbacks & Maintenance
 
-### 7.1 Standard Application Upgrade
+### 6.1 Standard Application Upgrade
 To upgrade to a new version of CubeSync:
 
 1. Create an on-demand database backup:
@@ -411,22 +359,22 @@ To upgrade to a new version of CubeSync:
    ```bash
    CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.2.0
    ```
-3. Pull new images and apply the rolling update:
+3. Pull new images and apply the update:
    ```bash
    cd /opt/cubesync
    docker compose pull
    docker compose up -d
    ```
-4. Verify migration completion and API health:
+4. Verify migration completion and service health:
    ```bash
-   docker compose logs --since=5m migrate api
-   curl -f http://127.0.0.1:43781/health/ready
+   docker compose logs --since=5m migrate api caddy
+   curl -f https://sync.example.com/health/ready
    ```
 
-### 7.2 Secret Rotation Runbooks
+### 6.2 Secret Rotation Runbooks
 
 #### Rotating `JWT_SECRET`
-Changing `JWT_SECRET` immediately invalidates all existing short-lived access tokens (15-minute TTL). However, because CubeSync stores refresh tokens as cryptographically hashed records in PostgreSQL, clients will automatically exchange their existing refresh tokens on the next request and receive a new access token signed with the new secret—**without logging users out**.
+Changing `JWT_SECRET` immediately invalidates all existing short-lived access tokens (15-minute TTL). Because CubeSync stores refresh tokens as cryptographically hashed records in PostgreSQL, clients will automatically exchange their existing refresh tokens on the next request and receive a new access token signed with the new secret—**without logging users out**.
 
 1. Generate a new secret: `openssl rand -base64 48`.
 2. Update `JWT_SECRET` in `/opt/cubesync/.env`.
@@ -443,8 +391,8 @@ Changing `JWT_SECRET` immediately invalidates all existing short-lived access to
    docker compose up -d
    ```
 
-### 7.3 Docker Log Rotation
-Prevent Docker container JSON logs from consuming all VPS disk space by configuring log rotation in `/etc/docker/daemon.json`:
+### 6.3 Docker Log Rotation
+Prevent Docker container JSON logs from consuming VPS disk space by configuring log rotation in `/etc/docker/daemon.json`:
 
 ```json
 {
@@ -463,7 +411,7 @@ sudo systemctl reload docker
 
 ---
 
-## Step 8: Troubleshooting & Diagnostic Runbook
+## Step 7: Troubleshooting & Diagnostic Runbook
 
 ### Common Issues and Resolutions
 
@@ -471,18 +419,19 @@ sudo systemctl reload docker
 | :--- | :--- | :--- |
 | `migrate` container fails on startup | Database connection failure or invalid credentials | Check `docker compose logs postgres` and verify `POSTGRES_PASSWORD` in `.env`. |
 | `api` container in `unhealthy` state | Database migrations have not finished or DB is unreachable | Inspect `docker compose logs migrate` to check for migration lock or syntax errors. |
-| `429 Too Many Requests` on auth endpoints | In-process rate limiter triggered (burst limit exceeded) | Verify client isn't in a rapid retry loop. If behind Caddy, ensure `X-Forwarded-For` is being passed. |
-| `502 Bad Gateway` from Caddy | CubeSync API is not running or bound to wrong port | Check `docker compose ps` and test `curl http://127.0.0.1:43781/health/ready` on the host. |
+| `caddy` fails to obtain SSL certificate | Port 80/443 blocked by firewall or DNS not pointing to VPS | Ensure DNS `A` record matches VPS IP and run `sudo ufw status` to confirm ports 80/443 are open. Check `docker compose logs caddy`. |
+| `429 Too Many Requests` on auth endpoints | In-process rate limiter triggered (burst limit exceeded) | Verify client isn't in a rapid retry loop. Check that `deploy/Caddyfile` includes `X-Forwarded-For`. |
+| `502 Bad Gateway` from Caddy | CubeSync API is not running or still initializing | Check `docker compose ps` and `docker compose logs api`. |
 | Verification emails fail to send | Incorrect SMTP host, port, credentials, or STARTTLS mismatch | Test SMTP credentials independently and inspect API error logs with `docker compose logs api`. |
 
 ### Diagnostic Commands
 
 ```bash
-# Check container status and health
+# Check status and health across all containers (caddy, api, postgres)
 docker compose ps
 
-# Follow live structured JSON logs
-docker compose logs -f --tail=100 api
+# Follow live structured logs
+docker compose logs -f --tail=100 api caddy
 
 # Check database connection pool status
 docker compose exec postgres psql -U cubetimer -d cubetimer -c "SELECT count(*), state FROM pg_stat_activity GROUP BY state;"
@@ -491,4 +440,5 @@ docker compose exec postgres psql -U cubetimer -d cubetimer -c "SELECT count(*),
 df -h
 docker system df
 ```
+
 
