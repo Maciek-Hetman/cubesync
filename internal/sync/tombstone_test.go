@@ -166,3 +166,7 @@ func TestApplySessionDeleteVersionMismatchStillConflicts(t *testing.T) {
 		t.Fatalf("expected conflict outcome at version 2, got %+v", outcome)
 	}
 }
+
+func (m *tombstoneMockDBTX) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
+}

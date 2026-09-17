@@ -3,8 +3,12 @@ package admin
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"math"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	storedb "github.com/Maciek-Hetman/cubing-sync-backend/internal/store/db"
@@ -50,9 +54,13 @@ type errorEvent struct {
 type Service struct {
 	pool      *pgxpool.Pool
 	now       func() time.Time
+	logger    *slog.Logger
 	metrics   chan metric
 	errorLogs chan errorEvent
 	done      chan struct{}
+	stopOnce  sync.Once
+	stopChan  chan struct{}
+	shutdown  atomic.Bool
 }
 
 type Overview struct {
@@ -99,8 +107,9 @@ type ErrorLog struct {
 }
 
 type ErrorLogResponse struct {
-	Errors     []ErrorLog `json:"errors"`
-	NextCursor *time.Time `json:"next_cursor"`
+	Errors       []ErrorLog `json:"errors"`
+	NextCursor   *time.Time `json:"next_cursor"`
+	NextCursorID *int64     `json:"next_cursor_id,omitempty"`
 }
 
 type QueryRange struct {
@@ -132,45 +141,37 @@ func NewService(pool *pgxpool.Pool) *Service {
 	s := &Service{
 		pool:      pool,
 		now:       time.Now,
+		logger:    slog.Default(),
 		metrics:   make(chan metric, 4096),
 		errorLogs: make(chan errorEvent, 4096),
 		done:      make(chan struct{}),
+		stopChan:  make(chan struct{}),
 	}
 	go s.flushLoop()
 	return s
 }
 
 func (s *Service) flushLoop() {
+	defer close(s.done)
+
 	buffer := make([]metric, 0, 200)
 	errBuffer := make([]errorEvent, 0, 100)
+	flushAll := func() {
+		s.flush(buffer)
+		buffer = buffer[:0]
+		s.flushErrors(errBuffer)
+		errBuffer = errBuffer[:0]
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	s.runCleanup()
 	cleanupTicker := time.NewTicker(24 * time.Hour)
 	defer cleanupTicker.Stop()
 
 	for {
 		select {
-		case m, ok := <-s.metrics:
-			if !ok {
-				s.flush(buffer)
-				s.flushErrors(errBuffer)
-				for {
-					select {
-					case e := <-s.errorLogs:
-						errBuffer = append(errBuffer, e)
-						if len(errBuffer) >= 100 {
-							s.flushErrors(errBuffer)
-							errBuffer = errBuffer[:0]
-						}
-					default:
-						if len(errBuffer) > 0 {
-							s.flushErrors(errBuffer)
-						}
-						close(s.done)
-						return
-					}
-				}
-			}
+		case m := <-s.metrics:
 			buffer = append(buffer, m)
 			if len(buffer) >= 200 {
 				s.flush(buffer)
@@ -183,48 +184,90 @@ func (s *Service) flushLoop() {
 				errBuffer = errBuffer[:0]
 			}
 		case <-ticker.C:
-			if len(buffer) > 0 {
-				s.flush(buffer)
-				buffer = buffer[:0]
-			}
-			if len(errBuffer) > 0 {
-				s.flushErrors(errBuffer)
-				errBuffer = errBuffer[:0]
-			}
+			flushAll()
 		case <-cleanupTicker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = storedb.New(s.pool).DeleteOldErrors(ctx)
-			cancel()
+			s.runCleanup()
+		case <-s.stopChan:
+			for {
+				select {
+				case m := <-s.metrics:
+					buffer = append(buffer, m)
+				case e := <-s.errorLogs:
+					errBuffer = append(errBuffer, e)
+				default:
+					flushAll()
+					return
+				}
+			}
 		}
 	}
 }
 
+func (s *Service) runCleanup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	q := storedb.New(s.pool)
+	if err := q.DeleteOldErrors(ctx); err != nil {
+		s.logger.Error("delete_old_errors_failed", "error", err)
+	}
+	if err := q.DeleteOldRequestStats(ctx); err != nil {
+		s.logger.Error("delete_old_request_stats_failed", "error", err)
+	}
+}
+
+type metricKey struct {
+	bucketHour time.Time
+	method     string
+	route      string
+	statusCode int32
+}
+
 func (s *Service) flush(buffer []metric) {
+	if len(buffer) == 0 {
+		return
+	}
+	aggregated := make(map[metricKey]*storedb.RecordRequestStatParams)
 	for _, m := range buffer {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		status := m.status
+		status := int32(m.status)
 		if status <= 0 {
 			status = 200
 		}
-		durationMS := m.duration.Milliseconds()
-		if durationMS < 0 {
-			durationMS = 0
+		durationMS := max(m.duration.Milliseconds(), 0)
+		key := metricKey{
+			bucketHour: m.at.UTC().Truncate(time.Hour),
+			method:     m.method,
+			route:      normalizeRoute(m.route),
+			statusCode: status,
 		}
-		_ = storedb.New(s.pool).RecordRequestStat(ctx, storedb.RecordRequestStatParams{
-			BucketHour:      m.at.UTC().Truncate(time.Hour),
-			Method:          m.method,
-			Route:           normalizeRoute(m.route),
-			StatusCode:      int32(status),
-			TotalDurationMs: durationMS,
-		})
-		cancel()
+		agg, ok := aggregated[key]
+		if !ok {
+			agg = &storedb.RecordRequestStatParams{
+				BucketHour: key.bucketHour, Method: key.method, Route: key.route, StatusCode: key.statusCode,
+			}
+			aggregated[key] = agg
+		}
+		agg.RequestCount++
+		agg.TotalDurationMs += durationMS
+		agg.MaxDurationMs = max(agg.MaxDurationMs, durationMS)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	q := storedb.New(s.pool)
+	for _, agg := range aggregated {
+		if err := q.RecordRequestStat(ctx, *agg); err != nil {
+			s.logger.Error("record_request_stat_failed", "error", err)
+		}
 	}
 }
 
 func (s *Service) flushErrors(buffer []errorEvent) {
+	if len(buffer) == 0 {
+		return
+	}
+	rows := make([]storedb.CopyRequestErrorsParams, 0, len(buffer))
 	for _, e := range buffer {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = storedb.New(s.pool).RecordRequestError(ctx, storedb.RecordRequestErrorParams{
+		rows = append(rows, storedb.CopyRequestErrorsParams{
 			UserID:     e.userID,
 			Method:     e.method,
 			Route:      normalizeRoute(e.route),
@@ -232,12 +275,16 @@ func (s *Service) flushErrors(buffer []errorEvent) {
 			Code:       e.code,
 			Message:    e.message,
 		})
-		cancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := storedb.New(s.pool).CopyRequestErrors(ctx, rows); err != nil {
+		s.logger.Error("record_request_errors_failed", "error", err, "count", len(rows))
 	}
 }
 
 func (s *Service) RecordRequestAsync(method, route string, status int, duration time.Duration) {
-	if shouldSkipRoute(route) {
+	if shouldSkipRoute(route) || s.shutdown.Load() {
 		return
 	}
 	m := metric{
@@ -254,7 +301,10 @@ func (s *Service) RecordRequestAsync(method, route string, status int, duration 
 }
 
 func (s *Service) Shutdown() {
-	close(s.metrics)
+	s.shutdown.Store(true)
+	s.stopOnce.Do(func() {
+		close(s.stopChan)
+	})
 	<-s.done
 }
 
@@ -350,23 +400,27 @@ func (s *Service) RequestTypeStats(ctx context.Context, query QueryRange) (Reque
 	}, nil
 }
 
-func (s *Service) ListErrors(ctx context.Context, before time.Time, limit int) (ErrorLogResponse, error) {
+func (s *Service) ListErrors(ctx context.Context, before time.Time, beforeID int64, limit int) (ErrorLogResponse, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	if before.IsZero() {
 		before = s.now().UTC()
 	}
+	if beforeID == 0 {
+		beforeID = math.MaxInt64
+	}
 
 	rows, err := storedb.New(s.pool).ListIndividualErrors(ctx, storedb.ListIndividualErrorsParams{
 		Before:   before,
+		BeforeID: beforeID,
 		LimitVal: int32(limit),
 	})
 	if err != nil {
 		return ErrorLogResponse{}, err
 	}
 
-	var errors []ErrorLog
+	errors := make([]ErrorLog, 0, len(rows))
 	for _, row := range rows {
 		var userID *string
 		if row.UserID.Valid {
@@ -386,19 +440,23 @@ func (s *Service) ListErrors(ctx context.Context, before time.Time, limit int) (
 	}
 
 	var nextCursor *time.Time
+	var nextCursorID *int64
 	if len(errors) == limit {
 		lastTime := errors[len(errors)-1].CreatedAt
+		lastID := errors[len(errors)-1].ID
 		nextCursor = &lastTime
+		nextCursorID = &lastID
 	}
 
 	return ErrorLogResponse{
-		Errors:     errors,
-		NextCursor: nextCursor,
+		Errors:       errors,
+		NextCursor:   nextCursor,
+		NextCursorID: nextCursorID,
 	}, nil
 }
 
 func (s *Service) RecordErrorAsync(userID uuid.UUID, method, route string, status int, code, message string) {
-	if shouldSkipRoute(route) {
+	if shouldSkipRoute(route) || s.shutdown.Load() || status == 401 {
 		return
 	}
 

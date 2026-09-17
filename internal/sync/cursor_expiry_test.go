@@ -139,3 +139,7 @@ func TestEffectiveInactiveWindowKeepsPositiveValue(t *testing.T) {
 		t.Fatalf("effectiveInactiveWindow(%v) = %v, want %v unchanged", want, got, want)
 	}
 }
+
+func (m *fixedMinValidDBTX) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
+}

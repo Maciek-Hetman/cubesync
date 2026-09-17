@@ -138,3 +138,7 @@ func TestSyncMutationPreservesDBRootCauses(t *testing.T) {
 		}
 	})
 }
+
+func (m *mockDBTX) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
+}

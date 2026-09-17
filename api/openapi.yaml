@@ -394,6 +394,22 @@ paths:
             type: string
             format: date-time
           description: Cursor for pagination - returns errors before this timestamp
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Cursor ID for pagination - used with before for keyset pagination
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of errors to return (1-100, default 50)
       responses:
         "200":
           description: List of recorded application errors
@@ -769,6 +785,10 @@ components:
         next_cursor:
           type: string
           format: date-time
+          nullable: true
+        next_cursor_id:
+          type: integer
+          format: int64
           nullable: true
     AuthSession:
       type: object
