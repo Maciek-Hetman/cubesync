@@ -25,18 +25,20 @@ const maxSolveDurationMS = 24 * 60 * 60 * 1000
 const changeEnvelopeOverhead = 200
 
 type Service struct {
-	pool             *pgxpool.Pool
-	maxMutations     int
-	defaultMaxChange int
-	maxResponseBytes int
+	pool                 *pgxpool.Pool
+	maxMutations         int
+	defaultMaxChange     int
+	maxResponseBytes     int
+	inactiveDeviceWindow time.Duration
 }
 
-func NewService(pool *pgxpool.Pool, maxMutations, defaultMaxChange, maxResponseBytes int) *Service {
+func NewService(pool *pgxpool.Pool, maxMutations, defaultMaxChange, maxResponseBytes int, inactiveDeviceWindow time.Duration) *Service {
 	return &Service{
-		pool:             pool,
-		maxMutations:     maxMutations,
-		defaultMaxChange: defaultMaxChange,
-		maxResponseBytes: maxResponseBytes,
+		pool:                 pool,
+		maxMutations:         maxMutations,
+		defaultMaxChange:     defaultMaxChange,
+		maxResponseBytes:     maxResponseBytes,
+		inactiveDeviceWindow: inactiveDeviceWindow,
 	}
 }
 
@@ -70,16 +72,8 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 	}
 
 	// Check cursor expiry: if a cursor has been pruned, the client must resync.
-	if req.Cursor > 0 {
-		qCheck := storedb.New(s.pool)
-		cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour) // conservative default
-		minValid, err := qCheck.MinValidCursorForUser(ctx, storedb.MinValidCursorForUserParams{
-			UserID:     userID,
-			LastSeenAt: cutoff,
-		})
-		if err == nil && minValid > 0 && req.Cursor < minValid {
-			return Response{}, clientError("cursor_expired", "your sync cursor has expired; perform a full resync")
-		}
+	if err := s.checkCursorNotExpired(ctx, storedb.New(s.pool), userID, req.Cursor); err != nil {
+		return Response{}, err
 	}
 
 	if len(req.Mutations) == 0 {
@@ -163,6 +157,26 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 	}
 
 	return Response{Outcomes: outcomes, Changes: changes, NextCursor: nextCursor, HasMore: hasMore}, nil
+}
+
+// checkCursorNotExpired must use the same inactive-device window as
+// RetentionService, otherwise a cursor retention already pruned past can pass.
+func (s *Service) checkCursorNotExpired(ctx context.Context, q *storedb.Queries, userID uuid.UUID, cursor int64) error {
+	if cursor <= 0 {
+		return nil
+	}
+	cutoff := time.Now().UTC().Add(-effectiveInactiveWindow(s.inactiveDeviceWindow))
+	minValid, err := q.MinValidCursorForUser(ctx, storedb.MinValidCursorForUserParams{
+		UserID:     userID,
+		LastSeenAt: cutoff,
+	})
+	if err != nil {
+		return fmt.Errorf("check cursor expiry: %w", err)
+	}
+	if minValid > 0 && cursor < minValid {
+		return clientError("cursor_expired", "your sync cursor has expired; perform a full resync")
+	}
+	return nil
 }
 
 func (s *Service) pullOnly(ctx context.Context, userID uuid.UUID, req Request, limit int, protoVersion int) (Response, error) {
@@ -322,10 +336,18 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 		if current.Version != m.BaseVersion {
 			return sessionConflict(m.ID, current, protoVersion), nil
 		}
+		if current.DeletedAt != nil {
+			// Already deleted at this version (e.g. by another device): idempotent success.
+			return accepted(m.ID, current.Version), nil
+		}
 		deleted, err := q.DeleteSession(ctx, storedb.DeleteSessionParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Unexpected with the row locked, but never fail the whole batch over it.
+				return sessionConflict(m.ID, current, protoVersion), nil
+			}
 			return MutationOutcome{}, fmt.Errorf("delete session: %w", err)
 		}
 		if err := appendSessionChange(ctx, q, userID, "delete", deleted); err != nil {
@@ -389,10 +411,18 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		if current.Version != m.BaseVersion {
 			return solveConflict(m.ID, current, protoVersion), nil
 		}
+		if current.DeletedAt != nil {
+			// Already deleted at this version (e.g. by another device): idempotent success.
+			return accepted(m.ID, current.Version), nil
+		}
 		deleted, err := q.DeleteSolve(ctx, storedb.DeleteSolveParams{
 			UserID: userID, ID: m.EntityID, Version: m.BaseVersion,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Unexpected with the row locked, but never fail the whole batch over it.
+				return solveConflict(m.ID, current, protoVersion), nil
+			}
 			return MutationOutcome{}, fmt.Errorf("delete solve: %w", err)
 		}
 		if err := appendSolveChange(ctx, q, userID, "delete", deleted); err != nil {

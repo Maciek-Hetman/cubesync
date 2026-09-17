@@ -141,7 +141,7 @@ After first sign-in, enqueue all existing local sessions before their solves wit
 
 ## Deletions
 
-Deletes are soft tombstones carrying a new version. Keep a local tombstone at least until its mutation is accepted and every returned change through the corresponding cursor is applied. A deleted session does not implicitly delete its solves.
+Deletes are soft tombstones carrying a new version. Keep a local tombstone at least until its mutation is accepted and every returned change through the corresponding cursor is applied. A deleted session does not implicitly delete its solves. Deleting an entity that is already tombstoned is idempotent: a delete mutation whose `base_version` matches the entity's current (already-deleted) version returns `accepted` with the unchanged version rather than a conflict or error, so a delete resubmitted by another device after receiving the tombstone does not fail.
 
 ## CubeTimer model mapping
 

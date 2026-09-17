@@ -227,7 +227,7 @@ func (s *RetentionService) runOnce() {
 		return
 	}
 
-	cutoff := time.Now().UTC().Add(-s.inactiveDeviceWindow)
+	cutoff := time.Now().UTC().Add(-effectiveInactiveWindow(s.inactiveDeviceWindow))
 	for _, userID := range userIDs {
 		minCursor, err := q.MinValidCursorForUser(ctx, storedb.MinValidCursorForUserParams{
 			UserID:     userID,

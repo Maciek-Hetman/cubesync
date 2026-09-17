@@ -53,7 +53,7 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 
 func TestSyncMutationPreservesDBRootCauses(t *testing.T) {
 	t.Parallel()
-	service := NewService(nil, 100, 100, 512*1024)
+	service := NewService(nil, 100, 100, 512*1024, 90*24*time.Hour)
 	userID := uuid.New()
 	deviceID := uuid.New()
 	sessionID := uuid.New()
