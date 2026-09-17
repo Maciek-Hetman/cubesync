@@ -64,10 +64,11 @@ func (s *SnapshotService) Snapshot(ctx context.Context, userID uuid.UUID, req Sn
 		return SnapshotResponse{}, err
 	}
 
-	// Use the client-supplied watermark when present so the cursor stays stable
-	// across pages. Compute it once on the first page otherwise.
+	// Compute the watermark only on the very first page (when AfterID is nil
+	// and entity is session or empty). On any other page, use req.Cursor as given.
 	snapshotCursor := req.Cursor
-	if snapshotCursor <= 0 {
+	isFirstPage := req.AfterID == uuid.Nil && (req.Entity == entitySession || req.Entity == "")
+	if snapshotCursor <= 0 && isFirstPage {
 		computed, err := q.LatestChangeCursor(ctx, userID)
 		if err != nil {
 			return SnapshotResponse{}, err

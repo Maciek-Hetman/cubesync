@@ -19,7 +19,7 @@ FROM solves
 WHERE user_id = $1
     AND deleted_at IS NULL
     AND ($2::text = '' OR event = $2::text)
-ORDER BY solved_at DESC
+ORDER BY solved_at DESC, id DESC
 LIMIT $3
 `
 

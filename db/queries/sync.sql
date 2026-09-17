@@ -115,4 +115,4 @@ DELETE FROM processed_mutations
 WHERE user_id = $1 AND created_at < $2;
 
 -- name: ListUsersWithChanges :many
-SELECT DISTINCT user_id FROM change_log;
+SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM change_log c WHERE c.user_id = u.id);

@@ -341,7 +341,7 @@ func (q *Queries) ListChanges(ctx context.Context, arg ListChangesParams) ([]Cha
 }
 
 const listUsersWithChanges = `-- name: ListUsersWithChanges :many
-SELECT DISTINCT user_id FROM change_log
+SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM change_log c WHERE c.user_id = u.id)
 `
 
 func (q *Queries) ListUsersWithChanges(ctx context.Context) ([]uuid.UUID, error) {
@@ -352,11 +352,11 @@ func (q *Queries) ListUsersWithChanges(ctx context.Context) ([]uuid.UUID, error)
 	defer rows.Close()
 	items := []uuid.UUID{}
 	for rows.Next() {
-		var user_id uuid.UUID
-		if err := rows.Scan(&user_id); err != nil {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		items = append(items, user_id)
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -1114,7 +1114,7 @@ components:
           format: uuid
     StatsResponse:
       type: object
-      required: [total_count, counted_count, dnf_count, min_ms, max_ms, mean_ms, stddev_ms, total_ms]
+      required: [total_count, counted_count, dnf_count, min_ms, max_ms, mean_ms, stddev_ms, total_ms, dnf_averages]
       properties:
         total_count:
           type: integer
@@ -1152,6 +1152,11 @@ components:
         ao100:
           type: integer
           format: int64
+        dnf_averages:
+          type: array
+          items:
+            type: string
+          description: List of averages that are DNF (e.g., ["ao12"])
     DeleteStub:
       type: object
       required: [id, version, deleted_at]

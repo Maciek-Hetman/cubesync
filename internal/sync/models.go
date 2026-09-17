@@ -121,18 +121,19 @@ type StatsRequest struct {
 
 // StatsResponse contains aggregated solve statistics.
 type StatsResponse struct {
-	TotalCount   int64   `json:"total_count"`
-	CountedCount int64   `json:"counted_count"` // excluding DNF
-	DNFCount     int64   `json:"dnf_count"`
-	MinMS        int64   `json:"min_ms"`
-	MaxMS        int64   `json:"max_ms"`
-	MeanMS       float64 `json:"mean_ms"`
-	StddevMS     float64 `json:"stddev_ms"`
-	TotalMS      int64   `json:"total_ms"`
-	Ao5          *int64  `json:"ao5,omitempty"`
-	Ao12         *int64  `json:"ao12,omitempty"`
-	Ao50         *int64  `json:"ao50,omitempty"`
-	Ao100        *int64  `json:"ao100,omitempty"`
+	TotalCount   int64    `json:"total_count"`
+	CountedCount int64    `json:"counted_count"` // excluding DNF
+	DNFCount     int64    `json:"dnf_count"`
+	MinMS        int64    `json:"min_ms"`
+	MaxMS        int64    `json:"max_ms"`
+	MeanMS       float64  `json:"mean_ms"`
+	StddevMS     float64  `json:"stddev_ms"`
+	TotalMS      int64    `json:"total_ms"`
+	Ao5          *int64   `json:"ao5,omitempty"`
+	Ao12         *int64   `json:"ao12,omitempty"`
+	Ao50         *int64   `json:"ao50,omitempty"`
+	Ao100        *int64   `json:"ao100,omitempty"`
+	DNFAverages  []string `json:"dnf_averages"` // e.g. ["ao12"], always an array
 }
 
 // SessionSummary is a session with a solve count for paginated history.

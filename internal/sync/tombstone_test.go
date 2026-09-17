@@ -112,8 +112,8 @@ func TestApplySessionDeleteOfTombstoneIsIdempotent(t *testing.T) {
 	if mock.queryRowCalls != 1 {
 		t.Fatalf("expected only the GetSessionForUpdate query row call, got %d query row calls", mock.queryRowCalls)
 	}
-	if mock.execCalls != 1 {
-		t.Fatalf("expected only the advisory lock exec call, got %d exec calls", mock.execCalls)
+	if mock.execCalls != 0 {
+		t.Fatalf("expected no exec calls (advisory lock is in Sync, not applySession), got %d exec calls", mock.execCalls)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestApplySolveDeleteOfTombstoneIsIdempotent(t *testing.T) {
 	if mock.queryRowCalls != 1 {
 		t.Fatalf("expected only the GetSolveForUpdate query row call, got %d query row calls", mock.queryRowCalls)
 	}
-	if mock.execCalls != 1 {
-		t.Fatalf("expected only the advisory lock exec call, got %d exec calls", mock.execCalls)
+	if mock.execCalls != 0 {
+		t.Fatalf("expected no exec calls (advisory lock is in Sync, not applySolve), got %d exec calls", mock.execCalls)
 	}
 }
 

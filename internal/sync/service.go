@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,11 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := storedb.New(tx)
 
+	// Acquire a single user-level advisory lock to serialize one user's concurrent mutation syncs.
+	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "sync")); err != nil {
+		return Response{}, err
+	}
+
 	if err := q.UpsertDevice(ctx, storedb.UpsertDeviceParams{
 		ID: req.Device.ID, UserID: userID, Name: req.Device.Name, Platform: req.Device.Platform,
 	}); err != nil {
@@ -96,21 +102,11 @@ func (s *Service) Sync(ctx context.Context, userID uuid.UUID, req Request, proto
 	outcomeByID := make(map[uuid.UUID]MutationOutcome, len(req.Mutations))
 	ordered := append([]Mutation(nil), req.Mutations...)
 	slices.SortStableFunc(ordered, func(a, b Mutation) int {
-		if a.Entity != b.Entity {
-			if a.Entity == "session" {
-				return -1
-			}
-			return 1
+		rankA, rankB := entityRank(a.Entity), entityRank(b.Entity)
+		if rankA != rankB {
+			return rankA - rankB
 		}
-		for i := 0; i < 16; i++ {
-			if a.EntityID[i] != b.EntityID[i] {
-				if a.EntityID[i] < b.EntityID[i] {
-					return -1
-				}
-				return 1
-			}
-		}
-		return 0
+		return bytes.Compare(a.EntityID[:], b.EntityID[:])
 	})
 
 	for _, mutation := range ordered {
@@ -271,9 +267,6 @@ func (s *Service) applyMutation(
 	protoVersion int,
 ) (MutationOutcome, error) {
 	if m.ID != uuid.Nil {
-		if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), deviceID.String(), "mutation", m.ID.String())); err != nil {
-			return MutationOutcome{}, err
-		}
 		raw, err := q.GetProcessedMutation(ctx, storedb.GetProcessedMutationParams{
 			UserID: userID, DeviceID: deviceID, MutationID: m.ID,
 		})
@@ -320,9 +313,6 @@ func (s *Service) applyMutation(
 func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) (MutationOutcome, error) {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome, nil
-	}
-	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "session", m.EntityID.String())); err != nil {
-		return MutationOutcome{}, fmt.Errorf("acquire session advisory lock: %w", err)
 	}
 	current, currentErr := q.GetSessionForUpdate(ctx, storedb.GetSessionForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
@@ -395,9 +385,6 @@ func (s *Service) applySession(ctx context.Context, q *storedb.Queries, userID u
 func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uuid.UUID, m Mutation, protoVersion int) (MutationOutcome, error) {
 	if outcome := validateMutationEnvelope(m); outcome != nil {
 		return *outcome, nil
-	}
-	if err := q.AcquireAdvisoryLockByID(ctx, advisoryLockKey(userID.String(), "solve", m.EntityID.String())); err != nil {
-		return MutationOutcome{}, fmt.Errorf("acquire solve advisory lock: %w", err)
 	}
 	current, currentErr := q.GetSolveForUpdate(ctx, storedb.GetSolveForUpdateParams{UserID: userID, ID: m.EntityID})
 	if currentErr != nil && !errors.Is(currentErr, pgx.ErrNoRows) {
@@ -624,6 +611,17 @@ func rejected(id uuid.UUID, code, message string) MutationOutcome {
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+func entityRank(entity string) int {
+	switch entity {
+	case "session":
+		return 0
+	case "solve":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func advisoryLockKey(parts ...string) int64 {
