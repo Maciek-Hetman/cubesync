@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 )
 
@@ -10,50 +11,66 @@ func TestClientIPExtraction(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		remoteAddr string
-		headers    map[string]string
-		wantIP     string
+		name           string
+		remoteAddr     string
+		headers        map[string]string
+		trustedProxies []string
+		wantIP         string
 	}{
 		{
-			name:       "direct public client",
+			name:       "direct public client ignores XFF",
 			remoteAddr: "203.0.113.195:4321",
 			headers: map[string]string{
 				"X-Forwarded-For": "198.51.100.1",
 			},
-			wantIP: "203.0.113.195",
+			trustedProxies: nil,
+			wantIP:         "203.0.113.195",
 		},
 		{
-			name:       "reverse proxy with X-Forwarded-For",
-			remoteAddr: "127.0.0.1:43781",
+			name:       "trusted proxy with X-Forwarded-For",
+			remoteAddr: "172.30.0.10:43781",
 			headers: map[string]string{
-				"X-Forwarded-For": "198.51.100.42, 127.0.0.1",
+				"X-Forwarded-For": "198.51.100.42, 172.30.0.10",
 			},
-			wantIP: "198.51.100.42",
+			trustedProxies: []string{"172.30.0.10/32"},
+			wantIP:         "198.51.100.42",
 		},
 		{
-			name:       "reverse proxy with X-Real-IP",
-			remoteAddr: "127.0.0.1:43781",
+			name:       "trusted proxy with X-Real-IP",
+			remoteAddr: "172.30.0.10:43781",
 			headers: map[string]string{
 				"X-Real-IP": "198.51.100.99",
 			},
-			wantIP: "198.51.100.99",
+			trustedProxies: []string{"172.30.0.10/32"},
+			wantIP:         "198.51.100.99",
 		},
 		{
-			name:       "IPv6 loopback with X-Forwarded-For",
-			remoteAddr: "[::1]:52123",
+			name:       "untrusted peer ignores XFF",
+			remoteAddr: "10.0.0.1:43781",
 			headers: map[string]string{
-				"X-Forwarded-For": "203.0.113.7",
+				"X-Forwarded-For": "198.51.100.50",
 			},
-			wantIP: "203.0.113.7",
+			trustedProxies: []string{"172.30.0.10/32"},
+			wantIP:         "10.0.0.1",
 		},
 		{
-			name:       "reverse proxy with invalid X-Forwarded-For fallback to host",
-			remoteAddr: "127.0.0.1:43781",
+			name:       "multi-hop XFF uses rightmost untrusted hop",
+			remoteAddr: "172.30.0.10:43781",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.5, 203.0.113.6, 172.30.0.10",
+			},
+			trustedProxies: []string{"172.30.0.10/32"},
+			wantIP:         "203.0.113.6",
+		},
+		{
+			name:       "malformed XFF falls back to peer",
+			remoteAddr: "172.30.0.10:43781",
 			headers: map[string]string{
 				"X-Forwarded-For": "invalid-ip",
+				"X-Real-IP":       "198.51.100.88",
 			},
-			wantIP: "127.0.0.1",
+			trustedProxies: []string{"172.30.0.10/32"},
+			wantIP:         "172.30.0.10",
 		},
 	}
 
@@ -65,7 +82,12 @@ func TestClientIPExtraction(t *testing.T) {
 			for k, v := range tt.headers {
 				req.Header.Set(k, v)
 			}
-			got := clientIP(req)
+			var trusted []netip.Prefix
+			for _, p := range tt.trustedProxies {
+				prefix, _ := netip.ParsePrefix(p)
+				trusted = append(trusted, prefix)
+			}
+			got := clientIP(req, trusted)
 			if got != tt.wantIP {
 				t.Fatalf("clientIP() = %q, want %q", got, tt.wantIP)
 			}

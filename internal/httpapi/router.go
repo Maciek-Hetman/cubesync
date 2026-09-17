@@ -45,7 +45,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger, adminSv
 		snapshot_: syncservice.NewSnapshotService(db, cfg.MaxSyncResponseBytes),
 		stats_:    syncservice.NewStatsService(db),
 	}
-	authLimit := newIPRateLimiter(10, 5)
+	authLimit := newIPRateLimiterWithProxies(10, 5, cfg.TrustedProxies)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(h.accessLog)

@@ -137,6 +137,12 @@ SMTP_STARTTLS=true
 # MANDATORY: Must be false in production to prevent secret leakage in logs
 LOG_ONE_TIME_LINKS=false
 
+# --- Rate Limiting & Reverse Proxy Security ---
+# Comma-separated list of CIDR blocks or bare IPs trusted as reverse proxies.
+# Only peers in these prefixes may have their X-Forwarded-For extracted for rate limiting.
+# Set to Caddy's container IP (172.30.0.10/32 in Docker Compose) to extract real client IPs.
+TRUSTED_PROXIES=172.30.0.10/32
+
 # --- OAuth Providers (Optional) ---
 GOOGLE_CLIENT_IDS=
 GOOGLE_CLIENT_SECRET=
@@ -204,7 +210,7 @@ Expected HTTP status: `HTTP/2 200` with body:
 
 > [!NOTE]
 > **Rate Limiting & Trusted Reverse Proxying**:
-> In `deploy/Caddyfile`, Caddy forwards `X-Forwarded-For` and `X-Real-IP` to `reverse_proxy api:43781`. The Go backend's `clientIP()` middleware recognizes Docker's private bridge subnet (`172.16.0.0/12`) as a trusted proxy, extracting the genuine public client IP to enforce per-IP authentication rate limits (10 req/min with burst of 5) without allowing direct header spoofing.
+> In `deploy/Caddyfile`, Caddy forwards real client IP via `X-Forwarded-For` and `X-Real-IP` headers to `reverse_proxy api:43781`. The Go backend's rate limiter accepts the `TRUSTED_PROXIES` environment variable (set to `172.30.0.10/32` for the Caddy container). Only requests from trusted proxy IPs will have their `X-Forwarded-For` headers inspected; untrusted peers' forwarding headers are ignored, preventing IP spoofing and ensuring accurate per-IP authentication rate limits (10 req/min with burst of 5).
 
 ---
 

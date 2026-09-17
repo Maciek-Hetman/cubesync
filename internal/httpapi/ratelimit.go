@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -11,11 +12,12 @@ import (
 )
 
 type ipRateLimiter struct {
-	mu        sync.Mutex
-	visitors  map[string]*visitor
-	rate      rate.Limit
-	burst     int
-	stopEvict chan struct{}
+	mu             sync.Mutex
+	visitors       map[string]*visitor
+	rate           rate.Limit
+	burst          int
+	stopEvict      chan struct{}
+	trustedProxies []netip.Prefix
 }
 
 type visitor struct {
@@ -24,11 +26,16 @@ type visitor struct {
 }
 
 func newIPRateLimiter(eventsPerMinute, burst int) *ipRateLimiter {
+	return newIPRateLimiterWithProxies(eventsPerMinute, burst, nil)
+}
+
+func newIPRateLimiterWithProxies(eventsPerMinute, burst int, trustedProxies []netip.Prefix) *ipRateLimiter {
 	l := &ipRateLimiter{
-		visitors:  make(map[string]*visitor),
-		rate:      rate.Every(time.Minute / time.Duration(eventsPerMinute)),
-		burst:     burst,
-		stopEvict: make(chan struct{}),
+		visitors:       make(map[string]*visitor),
+		rate:           rate.Every(time.Minute / time.Duration(eventsPerMinute)),
+		burst:          burst,
+		stopEvict:      make(chan struct{}),
+		trustedProxies: trustedProxies,
 	}
 	go l.evictLoop()
 	return l
@@ -54,34 +61,52 @@ func (l *ipRateLimiter) evictLoop() {
 	}
 }
 
-func clientIP(r *http.Request) string {
+func clientIP(r *http.Request, trustedProxies []netip.Prefix) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	ip := net.ParseIP(host)
-	if ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			client := strings.TrimSpace(parts[0])
-			if client != "" {
-				if parsed := net.ParseIP(client); parsed != nil {
-					return client
-				}
+	peer, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	peer = peer.Unmap()
+	if !isTrustedProxy(peer, trustedProxies) {
+		return peer.String()
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			addr, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
+			if err != nil {
+				// Entries left of a malformed hop cannot be attributed to a trusted proxy.
+				return peer.String()
+			}
+			addr = addr.Unmap()
+			if !isTrustedProxy(addr, trustedProxies) {
+				return addr.String()
 			}
 		}
-		if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
-			if parsed := net.ParseIP(xrip); parsed != nil {
-				return xrip
-			}
+		return peer.String()
+	}
+	if addr, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
+		return addr.Unmap().String()
+	}
+	return peer.String()
+}
+
+func isTrustedProxy(addr netip.Addr, trustedProxies []netip.Prefix) bool {
+	for _, prefix := range trustedProxies {
+		if prefix.Contains(addr) {
+			return true
 		}
 	}
-	return host
+	return false
 }
 
 func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := clientIP(r)
+		host := clientIP(r, l.trustedProxies)
 		l.mu.Lock()
 		entry, ok := l.visitors[host]
 		if !ok {
