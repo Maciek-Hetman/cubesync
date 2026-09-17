@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const developmentJWTSecret = "development-only-secret-change-me"
+
 type Config struct {
 	Environment          string
 	HTTPAddress          string
@@ -40,7 +42,8 @@ type Config struct {
 }
 
 func Load() (Config, error) {
-	secret, err := loadJWTSecret(os.Getenv("JWT_SECRET"))
+	rawSecret := os.Getenv("JWT_SECRET")
+	secret, err := loadJWTSecret(rawSecret)
 	if err != nil {
 		return Config{}, err
 	}
@@ -78,6 +81,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
 	if cfg.Environment == "production" {
+		if rawSecret == "" {
+			return Config{}, errors.New("JWT_SECRET must be set to a random value in production (openssl rand -base64 48)")
+		}
+		if string(secret) == developmentJWTSecret {
+			return Config{}, errors.New("JWT_SECRET must not use the development default in production (openssl rand -base64 48)")
+		}
 		if len(cfg.JWTSecret) < 32 {
 			return Config{}, errors.New("JWT_SECRET must decode to at least 32 bytes in production")
 		}
@@ -90,7 +99,7 @@ func Load() (Config, error) {
 
 func loadJWTSecret(value string) ([]byte, error) {
 	if value == "" {
-		return []byte("development-only-secret-change-me"), nil
+		return []byte(developmentJWTSecret), nil
 	}
 	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
 		return decoded, nil

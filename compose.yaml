@@ -37,7 +37,7 @@ services:
     command: ["migrate"]
     environment:
       DATABASE_URL: postgres://cubetimer:${POSTGRES_PASSWORD:-development-password}@postgres:5432/cubetimer?sslmode=disable
-      JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
     environment:
       DATABASE_URL: postgres://cubetimer:${POSTGRES_PASSWORD:-development-password}@postgres:5432/cubetimer?sslmode=disable
       HTTP_ADDRESS: :43781
-      JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-43781}:43781"
     depends_on:
