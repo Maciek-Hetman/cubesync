@@ -21,6 +21,7 @@ const (
 
 	verificationTokenTTL = 24 * time.Hour
 	passwordResetTTL     = time.Hour
+	refreshReuseGrace    = 30 * time.Second
 )
 
 type Service struct {
@@ -64,7 +65,7 @@ func (s *Service) Register(ctx context.Context, email, password string) error {
 	if err := validatePassword(password); err != nil {
 		return authError("invalid_password", err.Error())
 	}
-	passwordHash, err := hashPassword(password)
+	passwordHash, err := hashPassword(ctx, password)
 	if err != nil {
 		return err
 	}
@@ -154,11 +155,13 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 	credential, err := q.GetPasswordCredentialByEmail(ctx, normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Burn the same time as a real verification so unknown emails aren't detectable.
+			_, _ = verifyPassword(ctx, password, getDummyHash())
 			return Session{}, invalidCredentials()
 		}
 		return Session{}, err
 	}
-	valid, err := verifyPassword(password, credential.PasswordHash)
+	valid, err := verifyPassword(ctx, password, credential.PasswordHash)
 	if err != nil || !valid {
 		return Session{}, invalidCredentials()
 	}
@@ -185,6 +188,22 @@ func (s *Service) Refresh(ctx context.Context, rawToken string) (Session, error)
 		return Session{}, err
 	}
 	now := s.now().UTC()
+	// A retry shortly after rotation (lost response, concurrent refresh) is not theft.
+	if record.RevokedAt == nil && record.UsedAt != nil &&
+		now.Sub(*record.UsedAt) <= refreshReuseGrace && record.ExpiresAt.After(now) {
+		userRow, err := q.GetUserByID(ctx, record.UserID)
+		if err != nil {
+			return Session{}, err
+		}
+		session, err := s.issueSessionWithQueries(ctx, q, userFromDB(userRow), record.FamilyID)
+		if err != nil {
+			return Session{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Session{}, err
+		}
+		return session, nil
+	}
 	if record.UsedAt != nil || record.RevokedAt != nil {
 		if err := q.RevokeRefreshFamily(ctx, record.FamilyID); err != nil {
 			return Session{}, err
@@ -258,11 +277,14 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	if err := validatePassword(newPassword); err != nil {
 		return Session{}, authError("invalid_password", err.Error())
 	}
-	hash, err := hashPassword(newPassword)
+	hash, err := hashPassword(ctx, newPassword)
 	if err != nil {
 		return Session{}, err
 	}
 	return s.consumeOneTimeToken(ctx, rawToken, "reset_password", func(ctx context.Context, q *storedb.Queries, token storedb.OneTimeToken) error {
+		if err := q.SetUserEmailVerified(ctx, token.UserID); err != nil {
+			return err
+		}
 		if err := q.UpsertPasswordCredential(ctx, storedb.UpsertPasswordCredentialParams{
 			UserID: token.UserID, PasswordHash: hash,
 		}); err != nil {
@@ -287,7 +309,10 @@ func (s *Service) FederatedLogin(ctx context.Context, provider string, input Fed
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, err
 	}
-	if _, err := q.GetUserByEmail(ctx, identity.Email); err == nil {
+	if existing, err := q.GetUserByEmail(ctx, identity.Email); err == nil {
+		if existing.EmailVerifiedAt == nil {
+			return s.claimUnverifiedAccount(ctx, provider, identity)
+		}
 		return Session{}, authError("account_link_required", "sign in to the existing account, then link this provider")
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, err
@@ -318,6 +343,71 @@ func (s *Service) FederatedLogin(ctx context.Context, provider string, input Fed
 	}
 	session, err := s.issueSessionWithQueries(ctx, tq, User{
 		ID: userID, Email: identity.Email, EmailVerified: true, UserRole: RoleUser,
+	}, uuid.New())
+	if err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Session{}, err
+	}
+	return session, nil
+}
+
+// claimUnverifiedAccount hands an unverified email account to the verified
+// provider identity. Unverified accounts cannot sync, so nothing is exposed;
+// the unproven password and any outstanding tokens are discarded.
+func (s *Service) claimUnverifiedAccount(ctx context.Context, provider string, identity FederatedIdentity) (Session, error) {
+	linkRequired := authError("account_link_required", "sign in to the existing account, then link this provider")
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := storedb.New(tx)
+	user, err := q.GetUserByEmailForUpdate(ctx, identity.Email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Session{}, linkRequired
+		}
+		return Session{}, err
+	}
+	if user.EmailVerifiedAt != nil {
+		return Session{}, linkRequired
+	}
+	identities, err := q.CountUserIdentities(ctx, user.ID)
+	if err != nil {
+		return Session{}, err
+	}
+	if identities > 0 {
+		return Session{}, linkRequired
+	}
+	if err := q.DeletePasswordCredential(ctx, user.ID); err != nil {
+		return Session{}, err
+	}
+	if err := q.RevokeAllUserRefreshTokens(ctx, user.ID); err != nil {
+		return Session{}, err
+	}
+	for _, kind := range []string{"verify_email", "reset_password"} {
+		if err := q.InvalidateUserOneTimeTokens(ctx, storedb.InvalidateUserOneTimeTokensParams{
+			UserID: user.ID, Kind: kind,
+		}); err != nil {
+			return Session{}, err
+		}
+	}
+	if err := q.SetUserEmailVerified(ctx, user.ID); err != nil {
+		return Session{}, err
+	}
+	email := identity.Email
+	if err := q.CreateIdentity(ctx, storedb.CreateIdentityParams{
+		ID: uuid.New(), UserID: user.ID, Provider: provider, Subject: identity.Subject, Email: &email,
+	}); err != nil {
+		if isUniqueViolation(err) {
+			return Session{}, authError("identity_in_use", "this identity belongs to another account")
+		}
+		return Session{}, err
+	}
+	session, err := s.issueSessionWithQueries(ctx, q, User{
+		ID: user.ID, Email: user.Email, EmailVerified: true, UserRole: userFromDB(user).UserRole,
 	}, uuid.New())
 	if err != nil {
 		return Session{}, err
@@ -364,7 +454,7 @@ func (s *Service) CreateAdmin(ctx context.Context, email, password string) (User
 	if err := validatePassword(password); err != nil {
 		return User{}, authError("invalid_password", err.Error())
 	}
-	passwordHash, err := hashPassword(password)
+	passwordHash, err := hashPassword(ctx, password)
 	if err != nil {
 		return User{}, err
 	}
@@ -398,7 +488,7 @@ func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password st
 	if err := validatePassword(password); err != nil {
 		return authError("invalid_password", err.Error())
 	}
-	hash, err := hashPassword(password)
+	hash, err := hashPassword(ctx, password)
 	if err != nil {
 		return err
 	}
@@ -414,20 +504,21 @@ func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password st
 func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
 	q := storedb.New(s.pool)
 
-	// Check if user has an existing password credential
 	cred, err := q.GetPasswordCredentialByUserID(ctx, userID)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		// No existing password (e.g., federated only)
-		// We still require currentPassword to be empty or just ignore it.
-	} else {
-		// Verify the current password
-		valid, err := verifyPassword(currentPassword, cred.PasswordHash)
-		if err != nil || !valid {
-			return authError("invalid_credentials", "incorrect current password")
-		}
+		return authError("password_not_set", "this account has no password; use password reset to create one")
+	}
+
+	if currentPassword == "" {
+		return authError("invalid_credentials", "incorrect current password")
+	}
+
+	valid, err := verifyPassword(ctx, currentPassword, cred.PasswordHash)
+	if err != nil || !valid {
+		return authError("invalid_credentials", "incorrect current password")
 	}
 
 	return s.SetPassword(ctx, userID, newPassword)
@@ -482,7 +573,7 @@ func (s *Service) consumeOneTimeToken(
 		return Session{}, err
 	}
 	user := userFromDB(userRow)
-	if kind == "verify_email" {
+	if kind == "verify_email" || kind == "reset_password" {
 		user.EmailVerified = true
 	}
 	session, err := s.issueSessionWithQueries(ctx, q, user, uuid.New())

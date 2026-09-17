@@ -1,21 +1,25 @@
 package auth
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestPasswordHashRoundTrip(t *testing.T) {
 	t.Parallel()
-	encoded, err := hashPassword("correct horse battery staple")
+	ctx := context.Background()
+	encoded, err := hashPassword(ctx, "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
-	valid, err := verifyPassword("correct horse battery staple", encoded)
+	valid, err := verifyPassword(ctx, "correct horse battery staple", encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !valid {
 		t.Fatal("expected password to verify")
 	}
-	valid, err = verifyPassword("wrong password", encoded)
+	valid, err = verifyPassword(ctx, "wrong password", encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,8 @@ func TestPasswordValidation(t *testing.T) {
 
 func TestMalformedPasswordHash(t *testing.T) {
 	t.Parallel()
-	if _, err := verifyPassword("password", "not-an-argon-hash"); err == nil {
+	ctx := context.Background()
+	if _, err := verifyPassword(ctx, "password", "not-an-argon-hash"); err == nil {
 		t.Fatal("expected malformed hash to fail")
 	}
 }

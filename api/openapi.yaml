@@ -290,6 +290,8 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /v1/sync:
     post:
       operationId: synchronize
@@ -564,7 +566,7 @@ components:
       properties:
         current_password:
           type: string
-          description: Required if the user already has a password set.
+          description: Current password. Accounts without one receive 409 password_not_set and must use the password reset flow.
         new_password:
           type: string
           minLength: 8

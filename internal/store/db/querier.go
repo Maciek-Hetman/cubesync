@@ -14,6 +14,7 @@ import (
 type Querier interface {
 	AcquireAdvisoryLockByID(ctx context.Context, dollar_1 int64) error
 	AppendChange(ctx context.Context, arg AppendChangeParams) (int64, error)
+	CountUserIdentities(ctx context.Context, userID uuid.UUID) (int64, error)
 	CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (User, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) error
@@ -21,6 +22,7 @@ type Querier interface {
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteOldErrors(ctx context.Context) error
+	DeletePasswordCredential(ctx context.Context, userID uuid.UUID) error
 	DeleteSession(ctx context.Context, arg DeleteSessionParams) (CubeSession, error)
 	DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf, error)
 	DeleteUser(ctx context.Context, id uuid.UUID) error
@@ -33,6 +35,7 @@ type Querier interface {
 	GetSessionForUpdate(ctx context.Context, arg GetSessionForUpdateParams) (CubeSession, error)
 	GetSolveForUpdate(ctx context.Context, arg GetSolveForUpdateParams) (Solf, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
+	GetUserByEmailForUpdate(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserByIdentity(ctx context.Context, arg GetUserByIdentityParams) (User, error)
 	InsertSession(ctx context.Context, arg InsertSessionParams) (CubeSession, error)

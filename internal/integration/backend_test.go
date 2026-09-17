@@ -91,6 +91,10 @@ func TestBackendIntegration(t *testing.T) {
 		if rotated.RefreshToken == loginSession.RefreshToken {
 			t.Fatal("refresh token was not rotated")
 		}
+		// Move the rotation outside the retry grace window so reuse is treated as theft.
+		if _, err := pool.Exec(ctx, "UPDATE refresh_tokens SET used_at = used_at - interval '1 minute' WHERE used_at IS NOT NULL"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := authService.Refresh(ctx, loginSession.RefreshToken); authCode(err) != "refresh_token_reused" {
 			t.Fatalf("expected refresh_token_reused, got %v", err)
 		}
@@ -907,4 +911,12 @@ func TestSyncCursorExpiryAfterRetentionPrune(t *testing.T) {
 	if !errors.As(err, &clientErr) || clientErr.Code != "cursor_expired" {
 		t.Fatalf("expected cursor_expired for device B's pruned cursor, got %v", err)
 	}
+}
+
+func mustMarshal(v interface{}) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
