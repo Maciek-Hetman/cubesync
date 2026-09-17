@@ -5,6 +5,9 @@
 **Audit Date**: August 29, 2026  
 **Final Status**: **REMEDIATED & VERIFIED** (100% Pass across unit tests, race detector, static analysis, and clean builds)  
 
+> [!NOTE]
+> **2026-09-17 Update**: Sign-in with Apple and RS256 tokens have been removed since the original audit. All JWT tokens now use HS256 exclusively, and Google is the only supported federated authentication provider. The architecture overview and associated findings below have been updated to reflect this change.
+
 ---
 
 ## 1. Executive Summary
@@ -23,7 +26,7 @@ The audit evaluated five core dimensions:
 The CubeSync backend is structured as a modular Go service with clear domain separation and strong boundary contracts:
 - **CLI Entrypoints (`cmd/api/`)**: `serve` (HTTP daemon with graceful shutdown), `migrate` (Goose database migrations), `create-admin` (interactive admin provisioning), and `healthcheck`.
 - **Domain Services**:
-  - `internal/auth`: User credentials, password reset, Argon2id password hashing, RS256/HS256 JWT access tokens, opaque refresh tokens with cryptographically secure family rotation, and OIDC social authentication (Google and Apple).
+  - `internal/auth`: User credentials, password reset, Argon2id password hashing, HS256 JWT access tokens, opaque refresh tokens with cryptographically secure family rotation, and OIDC social authentication (Google).
   - `internal/sync`: Device registration, optimistic concurrency mutation engine, change log replication, snapshot generation, and server-side statistical computations (Ao5, Ao12, Ao50, Ao100).
   - `internal/admin`: Request telemetry metrics aggregation, audit logs, individual error tracking, and administrative statistics.
 - **HTTP Transport (`internal/httpapi/`)**: Chi router, CORS preflight handling, token-bucket IP rate limiting, JSON decoding boundaries with body caps and strict field enforcement, and authentication middleware.

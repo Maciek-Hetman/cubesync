@@ -12,6 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
+type CopyRequestErrorsParams struct {
+	UserID     uuid.NullUUID `json:"user_id"`
+	Method     string        `json:"method"`
+	Route      string        `json:"route"`
+	StatusCode int32         `json:"status_code"`
+	Code       string        `json:"code"`
+	Message    string        `json:"message"`
+}
+
 const deleteOldErrors = `-- name: DeleteOldErrors :exec
 DELETE FROM request_errors
 WHERE created_at < now() - interval '30 days'
@@ -19,6 +28,16 @@ WHERE created_at < now() - interval '30 days'
 
 func (q *Queries) DeleteOldErrors(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteOldErrors)
+	return err
+}
+
+const deleteOldRequestStats = `-- name: DeleteOldRequestStats :exec
+DELETE FROM request_stats_hourly
+WHERE bucket_hour < now() - interval '90 days'
+`
+
+func (q *Queries) DeleteOldRequestStats(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteOldRequestStats)
 	return err
 }
 
@@ -92,18 +111,19 @@ const listIndividualErrors = `-- name: ListIndividualErrors :many
 SELECT
     id, created_at, user_id, method, route, status_code, code, message
 FROM request_errors
-WHERE created_at < $1
-ORDER BY created_at DESC
-LIMIT $2
+WHERE (created_at, id) < ($1::timestamptz, $2::bigint)
+ORDER BY created_at DESC, id DESC
+LIMIT $3
 `
 
 type ListIndividualErrorsParams struct {
 	Before   time.Time `json:"before"`
+	BeforeID int64     `json:"before_id"`
 	LimitVal int32     `json:"limit_val"`
 }
 
 func (q *Queries) ListIndividualErrors(ctx context.Context, arg ListIndividualErrorsParams) ([]RequestError, error) {
-	rows, err := q.db.Query(ctx, listIndividualErrors, arg.Before, arg.LimitVal)
+	rows, err := q.db.Query(ctx, listIndividualErrors, arg.Before, arg.BeforeID, arg.LimitVal)
 	if err != nil {
 		return nil, err
 	}
@@ -237,43 +257,14 @@ func (q *Queries) ListRequestStatsByType(ctx context.Context, arg ListRequestSta
 	return items, nil
 }
 
-const recordRequestError = `-- name: RecordRequestError :exec
-INSERT INTO request_errors (
-    user_id, method, route, status_code, code, message
-) VALUES (
-    $1, $2, $3, $4, $5, $6
-)
-`
-
-type RecordRequestErrorParams struct {
-	UserID     uuid.NullUUID `json:"user_id"`
-	Method     string        `json:"method"`
-	Route      string        `json:"route"`
-	StatusCode int32         `json:"status_code"`
-	Code       string        `json:"code"`
-	Message    string        `json:"message"`
-}
-
-func (q *Queries) RecordRequestError(ctx context.Context, arg RecordRequestErrorParams) error {
-	_, err := q.db.Exec(ctx, recordRequestError,
-		arg.UserID,
-		arg.Method,
-		arg.Route,
-		arg.StatusCode,
-		arg.Code,
-		arg.Message,
-	)
-	return err
-}
-
 const recordRequestStat = `-- name: RecordRequestStat :exec
 INSERT INTO request_stats_hourly (
     bucket_hour, method, route, status_code, request_count, total_duration_ms, max_duration_ms
 ) VALUES (
-    $1, $2, $3, $4, 1, $5, $5
+    $1, $2, $3, $4, $5, $6, $7
 )
 ON CONFLICT (bucket_hour, method, route, status_code) DO UPDATE
-SET request_count = request_stats_hourly.request_count + 1,
+SET request_count = request_stats_hourly.request_count + EXCLUDED.request_count,
     total_duration_ms = request_stats_hourly.total_duration_ms + EXCLUDED.total_duration_ms,
     max_duration_ms = GREATEST(request_stats_hourly.max_duration_ms, EXCLUDED.max_duration_ms)
 `
@@ -283,7 +274,9 @@ type RecordRequestStatParams struct {
 	Method          string    `json:"method"`
 	Route           string    `json:"route"`
 	StatusCode      int32     `json:"status_code"`
+	RequestCount    int64     `json:"request_count"`
 	TotalDurationMs int64     `json:"total_duration_ms"`
+	MaxDurationMs   int64     `json:"max_duration_ms"`
 }
 
 func (q *Queries) RecordRequestStat(ctx context.Context, arg RecordRequestStatParams) error {
@@ -292,7 +285,9 @@ func (q *Queries) RecordRequestStat(ctx context.Context, arg RecordRequestStatPa
 		arg.Method,
 		arg.Route,
 		arg.StatusCode,
+		arg.RequestCount,
 		arg.TotalDurationMs,
+		arg.MaxDurationMs,
 	)
 	return err
 }

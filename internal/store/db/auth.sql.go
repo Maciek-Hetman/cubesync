@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const countUserIdentities = `-- name: CountUserIdentities :one
+SELECT COUNT(*) FROM identities WHERE user_id = $1
+`
+
+func (q *Queries) CountUserIdentities(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserIdentities, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAdminUser = `-- name: CreateAdminUser :one
 INSERT INTO users (id, email, email_verified_at, user_role)
 VALUES ($1, $2, now(), 'admin')
@@ -149,6 +160,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deletePasswordCredential = `-- name: DeletePasswordCredential :exec
+DELETE FROM password_credentials WHERE user_id = $1
+`
+
+func (q *Queries) DeletePasswordCredential(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePasswordCredential, userID)
+	return err
+}
+
 const deleteUser = `-- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1
 `
@@ -251,6 +271,25 @@ SELECT id, email, email_verified_at, created_at, updated_at, user_role FROM user
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UserRole,
+	)
+	return i, err
+}
+
+const getUserByEmailForUpdate = `-- name: GetUserByEmailForUpdate :one
+SELECT id, email, email_verified_at, created_at, updated_at, user_role FROM users WHERE email = lower($1)
+FOR UPDATE
+`
+
+func (q *Queries) GetUserByEmailForUpdate(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmailForUpdate, lower)
 	var i User
 	err := row.Scan(
 		&i.ID,

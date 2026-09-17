@@ -13,7 +13,7 @@ import (
 func TestSyncRejectsDuplicateMutationIDsBeforeDatabaseAccess(t *testing.T) {
 	t.Parallel()
 	mutationID := uuid.New()
-	service := NewService(nil, 10, 10, 512*1024)
+	service := NewService(nil, 10, 10, 512*1024, 90*24*time.Hour)
 	_, err := service.Sync(context.Background(), uuid.New(), Request{
 		Device: Device{ID: uuid.New()},
 		Mutations: []Mutation{

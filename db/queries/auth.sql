@@ -90,3 +90,13 @@ SELECT * FROM password_credentials WHERE user_id = $1;
 
 -- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1;
+
+-- name: GetUserByEmailForUpdate :one
+SELECT * FROM users WHERE email = lower($1)
+FOR UPDATE;
+
+-- name: DeletePasswordCredential :exec
+DELETE FROM password_credentials WHERE user_id = $1;
+
+-- name: CountUserIdentities :one
+SELECT COUNT(*) FROM identities WHERE user_id = $1;

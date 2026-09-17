@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,10 +17,11 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name       string
-		remoteAddr string
-		headers    map[string]string
-		expectedIP string
+		name          string
+		remoteAddr    string
+		headers       map[string]string
+		trustedPrefix string
+		expectedIP    string
 	}{
 		{
 			name:       "Public IPv4 cannot spoof with private XFF",
@@ -27,7 +29,8 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 			headers: map[string]string{
 				"X-Forwarded-For": "10.0.0.1",
 			},
-			expectedIP: "203.0.113.195",
+			trustedPrefix: "",
+			expectedIP:    "203.0.113.195",
 		},
 		{
 			name:       "Public IPv4 cannot spoof with public XFF",
@@ -35,7 +38,8 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 			headers: map[string]string{
 				"X-Forwarded-For": "198.51.100.5, 203.0.113.1",
 			},
-			expectedIP: "203.0.113.195",
+			trustedPrefix: "",
+			expectedIP:    "203.0.113.195",
 		},
 		{
 			name:       "Public IPv4 cannot spoof with X-Real-IP",
@@ -43,7 +47,8 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 			headers: map[string]string{
 				"X-Real-IP": "1.1.1.1",
 			},
-			expectedIP: "203.0.113.195",
+			trustedPrefix: "",
+			expectedIP:    "203.0.113.195",
 		},
 		{
 			name:       "Public IPv4 with both XFF and X-Real-IP ignored",
@@ -52,7 +57,8 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 				"X-Forwarded-For": "8.8.8.8",
 				"X-Real-IP":       "1.1.1.1",
 			},
-			expectedIP: "198.51.100.22",
+			trustedPrefix: "",
+			expectedIP:    "198.51.100.22",
 		},
 		{
 			name:       "Public IPv6 cannot spoof with XFF",
@@ -60,73 +66,73 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 			headers: map[string]string{
 				"X-Forwarded-For": "127.0.0.1",
 			},
-			expectedIP: "2607:f8b0:4005:805::200e",
+			trustedPrefix: "",
+			expectedIP:    "2607:f8b0:4005:805::200e",
 		},
 		{
-			name:       "Loopback IPv4 127.0.0.1 trusts leftmost XFF",
-			remoteAddr: "127.0.0.1:55000",
+			name:       "Trusted proxy ignores client-supplied leftmost XFF",
+			remoteAddr: "172.30.0.10:55000",
 			headers: map[string]string{
-				"X-Forwarded-For": "198.51.100.50, 10.0.0.1, 127.0.0.1",
+				"X-Forwarded-For": "198.51.100.50, 10.0.0.1, 172.30.0.10",
 			},
-			expectedIP: "198.51.100.50",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "10.0.0.1",
 		},
 		{
-			name:       "Private IPv4 10.0.0.1 trusts leftmost XFF",
+			name:       "Untrusted proxy ignores XFF from spoofed client",
 			remoteAddr: "10.0.0.1:44321",
 			headers: map[string]string{
 				"X-Forwarded-For": "203.0.113.77, 10.0.0.2",
 			},
-			expectedIP: "203.0.113.77",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "10.0.0.1",
 		},
 		{
-			name:       "Private IPv4 192.168.1.1 trusts X-Real-IP when XFF is absent",
-			remoteAddr: "192.168.1.1:33221",
+			name:       "Trusted proxy trusts X-Real-IP when XFF is absent",
+			remoteAddr: "172.30.0.10:33221",
 			headers: map[string]string{
 				"X-Real-IP": "203.0.113.88",
 			},
-			expectedIP: "203.0.113.88",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "203.0.113.88",
 		},
 		{
-			name:       "Private IPv4 172.16.0.5 trusts X-Real-IP when XFF is invalid",
-			remoteAddr: "172.16.0.5:12345",
+			name:       "Invalid XFF from trusted proxy falls back to peer",
+			remoteAddr: "172.30.0.10:12345",
 			headers: map[string]string{
 				"X-Forwarded-For": "not-an-ip",
 				"X-Real-IP":       "198.51.100.99",
 			},
-			expectedIP: "198.51.100.99",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "172.30.0.10",
 		},
 		{
-			name:       "Loopback IPv6 [::1] trusts leftmost XFF",
-			remoteAddr: "[::1]:54321",
+			name:       "Trusted subnet extracts from multi-hop chain",
+			remoteAddr: "172.30.0.10:54321",
 			headers: map[string]string{
-				"X-Forwarded-For": "203.0.113.99, 10.0.0.1",
+				"X-Forwarded-For": "203.0.113.99, 172.30.0.20, 172.30.0.10",
 			},
-			expectedIP: "203.0.113.99",
+			trustedPrefix: "172.30.0.0/24",
+			expectedIP:    "203.0.113.99",
 		},
 		{
-			name:       "Unspecified IPv4 0.0.0.0 trusts leftmost XFF",
-			remoteAddr: "0.0.0.0:80",
+			name:       "Untrusted proxy ignores headers entirely",
+			remoteAddr: "127.0.0.1:8080",
 			headers: map[string]string{
 				"X-Forwarded-For": "198.51.100.123",
+				"X-Real-IP":       "8.8.8.8",
 			},
-			expectedIP: "198.51.100.123",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "127.0.0.1",
 		},
 		{
-			name:       "Proxy with completely empty/invalid headers falls back to remote host",
-			remoteAddr: "127.0.0.1:8080",
+			name:       "XFF with whitespace trimmed properly when trusted",
+			remoteAddr: "172.30.0.10:8080",
 			headers: map[string]string{
-				"X-Forwarded-For": "   ",
-				"X-Real-IP":       "bogus",
+				"X-Forwarded-For": "10.0.0.1,  203.0.113.111  ",
 			},
-			expectedIP: "127.0.0.1",
-		},
-		{
-			name:       "XFF with whitespace around IPs is trimmed properly",
-			remoteAddr: "127.0.0.1:8080",
-			headers: map[string]string{
-				"X-Forwarded-For": "  203.0.113.111  , 10.0.0.1",
-			},
-			expectedIP: "203.0.113.111",
+			trustedPrefix: "172.30.0.10/32",
+			expectedIP:    "203.0.113.111",
 		},
 	}
 
@@ -140,9 +146,15 @@ func TestClientIPSpoofingResistance(t *testing.T) {
 				req.Header.Set(k, v)
 			}
 
-			actualIP := clientIP(req)
+			var trusted []netip.Prefix
+			if tc.trustedPrefix != "" {
+				prefix, _ := netip.ParsePrefix(tc.trustedPrefix)
+				trusted = append(trusted, prefix)
+			}
+
+			actualIP := clientIP(req, trusted)
 			if actualIP != tc.expectedIP {
-				t.Errorf("clientIP(%q, headers=%v) = %q; want %q", tc.remoteAddr, tc.headers, actualIP, tc.expectedIP)
+				t.Errorf("clientIP(%q, headers=%v, trusted=%v) = %q; want %q", tc.remoteAddr, tc.headers, tc.trustedPrefix, actualIP, tc.expectedIP)
 			}
 		})
 	}

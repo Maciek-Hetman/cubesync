@@ -37,20 +37,21 @@ func TestPasswordChangeValidationAndSecurity(t *testing.T) {
 	t.Run("ChangePassword enforces current password check before updating", func(t *testing.T) {
 		t.Parallel()
 		// Test that password verification logic correctly distinguishes between valid and invalid current passwords
+		ctx := context.Background()
 		validPass := "my-secret-password-123"
-		hash, err := hashPassword(validPass)
+		hash, err := hashPassword(ctx, validPass)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// Correct password verifies
-		ok, err := verifyPassword(validPass, hash)
+		ok, err := verifyPassword(ctx, validPass, hash)
 		if err != nil || !ok {
 			t.Fatalf("expected valid password verification: ok=%v err=%v", ok, err)
 		}
 
 		// Incorrect current password fails verification
-		ok, err = verifyPassword("wrong-current-password", hash)
+		ok, err = verifyPassword(ctx, "wrong-current-password", hash)
 		if err != nil || ok {
 			t.Fatalf("expected incorrect password verification to fail: ok=%v err=%v", ok, err)
 		}

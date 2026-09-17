@@ -2,10 +2,10 @@
 INSERT INTO request_stats_hourly (
     bucket_hour, method, route, status_code, request_count, total_duration_ms, max_duration_ms
 ) VALUES (
-    $1, $2, $3, $4, 1, $5, $5
+    $1, $2, $3, $4, $5, $6, $7
 )
 ON CONFLICT (bucket_hour, method, route, status_code) DO UPDATE
-SET request_count = request_stats_hourly.request_count + 1,
+SET request_count = request_stats_hourly.request_count + EXCLUDED.request_count,
     total_duration_ms = request_stats_hourly.total_duration_ms + EXCLUDED.total_duration_ms,
     max_duration_ms = GREATEST(request_stats_hourly.max_duration_ms, EXCLUDED.max_duration_ms);
 
@@ -69,7 +69,7 @@ WHERE bucket_hour >= sqlc.arg(from_time)
 GROUP BY route
 ORDER BY request_count DESC, route;
 
--- name: RecordRequestError :exec
+-- name: CopyRequestErrors :copyfrom
 INSERT INTO request_errors (
     user_id, method, route, status_code, code, message
 ) VALUES (
@@ -80,10 +80,14 @@ INSERT INTO request_errors (
 SELECT
     id, created_at, user_id, method, route, status_code, code, message
 FROM request_errors
-WHERE created_at < sqlc.arg(before)
-ORDER BY created_at DESC
+WHERE (created_at, id) < (sqlc.arg(before)::timestamptz, sqlc.arg(before_id)::bigint)
+ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(limit_val);
 
 -- name: DeleteOldErrors :exec
 DELETE FROM request_errors
 WHERE created_at < now() - interval '30 days';
+
+-- name: DeleteOldRequestStats :exec
+DELETE FROM request_stats_hourly
+WHERE bucket_hour < now() - interval '90 days';

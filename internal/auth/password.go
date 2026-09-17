@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -19,7 +22,32 @@ const (
 	argonKeyLength   = 32
 )
 
-func hashPassword(password string) (string, error) {
+var (
+	argonSem = make(chan struct{}, max(2, min(4, runtime.NumCPU())))
+
+	dummyHash string
+	hashOnce  sync.Once
+)
+
+func getDummyHash() string {
+	hashOnce.Do(func() {
+		h, _ := hashPasswordInternal("dummy-password-for-timing-mitigation")
+		dummyHash = h
+	})
+	return dummyHash
+}
+
+func hashPassword(ctx context.Context, password string) (string, error) {
+	select {
+	case argonSem <- struct{}{}:
+		defer func() { <-argonSem }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return hashPasswordInternal(password)
+}
+
+func hashPasswordInternal(password string) (string, error) {
 	salt := make([]byte, argonSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -35,7 +63,17 @@ func hashPassword(password string) (string, error) {
 	), nil
 }
 
-func verifyPassword(password, encoded string) (bool, error) {
+func verifyPassword(ctx context.Context, password, encoded string) (bool, error) {
+	select {
+	case argonSem <- struct{}{}:
+		defer func() { <-argonSem }()
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	return verifyPasswordInternal(password, encoded)
+}
+
+func verifyPasswordInternal(password, encoded string) (bool, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" || parts[2] != "v=19" {
 		return false, errors.New("invalid password hash format")

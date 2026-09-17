@@ -248,7 +248,7 @@ func (h *Handler) writeAuthError(w http.ResponseWriter, r *http.Request, err err
 		status = http.StatusUnauthorized
 	case "email_not_verified":
 		status = http.StatusForbidden
-	case "email_in_use", "account_link_required", "identity_in_use", "provider_already_linked", "refresh_token_reused":
+	case "email_in_use", "account_link_required", "identity_in_use", "provider_already_linked", "refresh_token_reused", "password_not_set":
 		status = http.StatusConflict
 	case "email_delivery_failed", "provider_not_configured":
 		status = http.StatusServiceUnavailable

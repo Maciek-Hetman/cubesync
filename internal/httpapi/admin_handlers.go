@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Maciek-Hetman/cubing-sync-backend/internal/admin"
@@ -56,9 +57,29 @@ func (h *Handler) adminErrorStats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	limit := 50
 
-	resp, err := h.admin.ListErrors(r.Context(), before, limit)
+	beforeIDStr := r.URL.Query().Get("before_id")
+	var beforeID int64
+	if beforeIDStr != "" {
+		var err error
+		beforeID, err = strconv.ParseInt(beforeIDStr, 10, 64)
+		if err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid_cursor", "before_id must be an integer")
+			return
+		}
+	}
+
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		parsed, err := strconv.Atoi(limitStr)
+		if err != nil || parsed < 1 || parsed > 100 {
+			h.writeError(w, r, http.StatusBadRequest, "invalid_limit", "limit must be an integer between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+
+	resp, err := h.admin.ListErrors(r.Context(), before, beforeID, limit)
 	if err != nil {
 		h.writeAdminError(w, r, err)
 		return

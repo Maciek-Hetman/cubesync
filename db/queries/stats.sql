@@ -31,5 +31,5 @@ FROM solves
 WHERE user_id = $1
     AND deleted_at IS NULL
     AND (sqlc.arg(event)::text = '' OR event = sqlc.arg(event)::text)
-ORDER BY solved_at DESC
+ORDER BY solved_at DESC, id DESC
 LIMIT sqlc.arg(limit_val);

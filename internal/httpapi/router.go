@@ -40,12 +40,12 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, logger *slog.Logger, adminSv
 		db:        db,
 		logger:    logger,
 		auth:      authService,
-		sync:      syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges, cfg.MaxSyncResponseBytes),
+		sync:      syncservice.NewService(db, cfg.MaxSyncMutations, cfg.MaxSyncChanges, cfg.MaxSyncResponseBytes, cfg.InactiveDeviceWindow),
 		admin:     adminService,
 		snapshot_: syncservice.NewSnapshotService(db, cfg.MaxSyncResponseBytes),
 		stats_:    syncservice.NewStatsService(db),
 	}
-	authLimit := newIPRateLimiter(10, 5)
+	authLimit := newIPRateLimiterWithProxies(10, 5, cfg.TrustedProxies)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(h.accessLog)

@@ -53,7 +53,7 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 
 func TestSyncMutationPreservesDBRootCauses(t *testing.T) {
 	t.Parallel()
-	service := NewService(nil, 100, 100, 512*1024)
+	service := NewService(nil, 100, 100, 512*1024, 90*24*time.Hour)
 	userID := uuid.New()
 	deviceID := uuid.New()
 	sessionID := uuid.New()
@@ -137,4 +137,8 @@ func TestSyncMutationPreservesDBRootCauses(t *testing.T) {
 			t.Fatalf("expected errors.Is(err, errSimulatedDB) = true, got %v", err)
 		}
 	})
+}
+
+func (m *mockDBTX) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
 }

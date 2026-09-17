@@ -91,6 +91,10 @@ func TestBackendIntegration(t *testing.T) {
 		if rotated.RefreshToken == loginSession.RefreshToken {
 			t.Fatal("refresh token was not rotated")
 		}
+		// Move the rotation outside the retry grace window so reuse is treated as theft.
+		if _, err := pool.Exec(ctx, "UPDATE refresh_tokens SET used_at = used_at - interval '1 minute' WHERE used_at IS NOT NULL"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := authService.Refresh(ctx, loginSession.RefreshToken); authCode(err) != "refresh_token_reused" {
 			t.Fatalf("expected refresh_token_reused, got %v", err)
 		}
@@ -147,7 +151,7 @@ func TestBackendIntegration(t *testing.T) {
 }
 
 func testSynchronization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) {
-	service := syncservice.NewService(pool, 100, 100, 512*1024)
+	service := syncservice.NewService(pool, 100, 100, 512*1024, 90*24*time.Hour)
 	deviceA := syncservice.Device{ID: uuid.New(), Name: "Android", Platform: "android"}
 	deviceB := syncservice.Device{ID: uuid.New(), Name: "Mac", Platform: "macos"}
 	sessionID := uuid.New()
@@ -611,4 +615,308 @@ func (f *fakeFederatedVerifier) Verify(_ context.Context, provider string, input
 		return auth.FederatedIdentity{}, auth.Error{Code: "invalid_social_token", Message: "invalid identity"}
 	}
 	return identity, nil
+}
+
+// TestSyncDeleteOfTombstoneIsIdempotent covers the scenario where two devices
+// race to delete the same entity: device A's delete lands first (v1 -> v2),
+// device B then resubmits its own already-queued delete mutation with
+// base_version 2 (the version it just learned about from the tombstone
+// change). Before the fix, DeleteSession/DeleteSolve's `deleted_at IS NULL`
+// WHERE clause matched zero rows in that case, surfaced pgx.ErrNoRows, and
+// rolled back the whole sync transaction as a 500 - permanently wedging the
+// client's outbox since the mutation was never recorded as processed. It
+// must instead be reported as an idempotent `accepted` at the unchanged
+// version, without a second change_log entry. Resubmitting with a stale
+// base_version (1) must still be reported as a conflict.
+func TestSyncDeleteOfTombstoneIsIdempotent(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	runMigrations(t, databaseURL)
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := pool.Exec(ctx, "TRUNCATE users RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+
+	userID := uuid.New()
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id, email, email_verified_at) VALUES ($1, $2, now())", userID, "tombstone@example.test"); err != nil {
+		t.Fatal(err)
+	}
+
+	service := syncservice.NewService(pool, 100, 100, 512*1024, 90*24*time.Hour)
+	device := syncservice.Device{ID: uuid.New(), Name: "Test device", Platform: "test"}
+	sessionID := uuid.New()
+	solveID := uuid.New()
+	startedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+
+	sessionData := mustJSON(t, syncservice.Session{
+		ID: sessionID, Name: "Tombstone practice", Event: "3x3", Kind: "manual", StartedAt: startedAt,
+	})
+	solveData := mustJSON(t, syncservice.Solve{
+		ID: solveID, SessionID: &sessionID, DurationMS: 9_999, Penalty: "none",
+		SolvedAt: startedAt.Add(time.Second), Scramble: "R U R' U'", Event: "3x3",
+	})
+	created, err := service.Sync(ctx, userID, syncservice.Request{
+		Device: device,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "upsert", Data: sessionData},
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "upsert", Data: solveData},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("initial create failed: %v", err)
+	}
+	if len(created.Outcomes) != 2 || created.Outcomes[0].Status != "accepted" || created.Outcomes[1].Status != "accepted" {
+		t.Fatalf("unexpected create outcomes: %+v", created.Outcomes)
+	}
+
+	// First delete of each entity: base_version 1 -> 2, accepted.
+	firstDelete, err := service.Sync(ctx, userID, syncservice.Request{
+		Cursor: created.NextCursor, Device: device,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "delete", BaseVersion: 1},
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "delete", BaseVersion: 1},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("first delete failed: %v", err)
+	}
+	for _, outcome := range firstDelete.Outcomes {
+		if outcome.Status != "accepted" || outcome.Version != 2 {
+			t.Fatalf("expected first delete accepted at version 2, got %+v", outcome)
+		}
+	}
+
+	changeLogCount := func(entityID uuid.UUID) int64 {
+		t.Helper()
+		var count int64
+		if err := pool.QueryRow(ctx,
+			"SELECT count(*) FROM change_log WHERE user_id = $1 AND entity_id = $2 AND operation = 'delete'",
+			userID, entityID,
+		).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	sessionDeleteEntries := changeLogCount(sessionID)
+	solveDeleteEntries := changeLogCount(solveID)
+	if sessionDeleteEntries != 1 || solveDeleteEntries != 1 {
+		t.Fatalf("expected exactly one delete change_log entry each, got session=%d solve=%d", sessionDeleteEntries, solveDeleteEntries)
+	}
+
+	// A new mutation id resubmitting the same delete at the now-current
+	// base_version (2) must succeed idempotently: HTTP-level 200, outcome
+	// accepted, version unchanged, and no additional change_log entry.
+	resubmitted, err := service.Sync(ctx, userID, syncservice.Request{
+		Cursor: firstDelete.NextCursor, Device: device,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "delete", BaseVersion: 2},
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "delete", BaseVersion: 2},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("idempotent resubmitted delete returned an error instead of a clean outcome: %v", err)
+	}
+	for _, outcome := range resubmitted.Outcomes {
+		if outcome.Status != "accepted" || outcome.Version != 2 {
+			t.Fatalf("expected idempotent resubmitted delete to be accepted at version 2, got %+v", outcome)
+		}
+	}
+	if len(resubmitted.Changes) != 0 {
+		t.Fatalf("idempotent resubmitted delete must not produce new changes: %+v", resubmitted.Changes)
+	}
+	if got := changeLogCount(sessionID); got != sessionDeleteEntries {
+		t.Fatalf("idempotent resubmitted session delete added a change_log entry: before=%d after=%d", sessionDeleteEntries, got)
+	}
+	if got := changeLogCount(solveID); got != solveDeleteEntries {
+		t.Fatalf("idempotent resubmitted solve delete added a change_log entry: before=%d after=%d", solveDeleteEntries, got)
+	}
+
+	// A delete resubmitted with a stale base_version (1, the pre-tombstone
+	// version) must still be reported as a conflict, not idempotent success.
+	staleConflict, err := service.Sync(ctx, userID, syncservice.Request{
+		Cursor: resubmitted.NextCursor, Device: device,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "delete", BaseVersion: 1},
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "delete", BaseVersion: 1},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("stale base_version delete returned an error instead of a conflict: %v", err)
+	}
+	for _, outcome := range staleConflict.Outcomes {
+		if outcome.Status != "conflict" || outcome.Version != 2 {
+			t.Fatalf("expected stale base_version delete to conflict at version 2, got %+v", outcome)
+		}
+	}
+}
+
+// TestSyncCursorExpiryAfterRetentionPrune covers the interaction between
+// RetentionService's prune job (internal/sync/retention.go) and
+// Service.Sync's cursor-expiry check (checkCursorNotExpired in
+// internal/sync/service.go): both must partition a user's devices into
+// "active"/"inactive" using the same inactive-device window, or a device
+// that has been away longer than the *real* retention window - but whose
+// stale ack cursor would still fall inside a shorter, mismatched check
+// window - can silently miss changes retention already pruned instead of
+// being told to resync.
+//
+// It configures the sync Service with a short 7-day window (as an operator
+// might via INACTIVE_DEVICE_WINDOW), backdates a second device's last_seen_at
+// by 30 days so retention would treat it as inactive, prunes change_log down
+// to the still-active device's ack cursor exactly as RetentionService.runOnce
+// would, and then asserts the stale device's resumed sync is rejected with
+// cursor_expired rather than silently returning an empty, "caught up" page.
+func TestSyncCursorExpiryAfterRetentionPrune(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	runMigrations(t, databaseURL)
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := pool.Exec(ctx, "TRUNCATE users RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+
+	userID := uuid.New()
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id, email, email_verified_at) VALUES ($1, $2, now())", userID, "cursor-expiry@example.test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A short window makes the original bug reproducible: with the old
+	// hardcoded 90-day check, a device inactive for 30 days would still
+	// count as "active" for the check (even though retention, run with this
+	// 7-day window, already treats it as inactive and prunes past its ack),
+	// so its own stale ack would keep minValid low and the check would never
+	// trip.
+	const window = 7 * 24 * time.Hour
+	service := syncservice.NewService(pool, 100, 100, 512*1024, window)
+
+	deviceA := syncservice.Device{ID: uuid.New(), Name: "Desktop", Platform: "linux"}
+	deviceB := syncservice.Device{ID: uuid.New(), Name: "Phone", Platform: "android"}
+	sessionID := uuid.New()
+	solveID := uuid.New()
+	startedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+
+	sessionData := mustJSON(t, syncservice.Session{
+		ID: sessionID, Name: "Expiry practice", Event: "3x3", Kind: "manual", StartedAt: startedAt,
+	})
+	solveData := mustJSON(t, syncservice.Solve{
+		ID: solveID, SessionID: &sessionID, DurationMS: 11_111, Penalty: "none",
+		SolvedAt: startedAt.Add(time.Second), Scramble: "R U R' U'", Event: "3x3",
+	})
+
+	// Device A creates the first batch of changes.
+	created, err := service.Sync(ctx, userID, syncservice.Request{
+		Device: deviceA,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "session", EntityID: sessionID, Operation: "upsert", Data: sessionData},
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "upsert", Data: solveData},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("initial create failed: %v", err)
+	}
+	firstBatchCursor := created.NextCursor
+	// Device A acks up through the batch it just wrote (ack advances to the
+	// *request* cursor - see the comment above UpdateDeviceAckCursor's call
+	// site in service.go - so this extra round trip is what actually records
+	// the ack).
+	if _, err := service.Sync(ctx, userID, syncservice.Request{Cursor: firstBatchCursor, Device: deviceA}, 1); err != nil {
+		t.Fatalf("device A ack pull failed: %v", err)
+	}
+
+	// Device B pulls the same batch and acks it too - this is the cursor it
+	// will (wrongly, once stale) keep trying to resume from below.
+	pulledB, err := service.Sync(ctx, userID, syncservice.Request{Device: deviceB}, 1)
+	if err != nil {
+		t.Fatalf("device B initial pull failed: %v", err)
+	}
+	if pulledB.NextCursor != firstBatchCursor {
+		t.Fatalf("device B did not see the full first batch: got cursor %d, want %d", pulledB.NextCursor, firstBatchCursor)
+	}
+	if _, err := service.Sync(ctx, userID, syncservice.Request{Cursor: firstBatchCursor, Device: deviceB}, 1); err != nil {
+		t.Fatalf("device B ack pull failed: %v", err)
+	}
+
+	// Device B goes quiet for 30 days - long enough for a 7-day retention
+	// window to treat it as inactive, but well inside the old hardcoded
+	// 90-day check window that caused the bug.
+	if _, err := pool.Exec(ctx,
+		"UPDATE devices SET last_seen_at = now() - interval '30 days' WHERE user_id = $1 AND id = $2",
+		userID, deviceB.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Device A keeps syncing and fully catches up to a second batch of
+	// changes, advancing its own ack cursor past the first batch.
+	updatedSolve := mustJSON(t, syncservice.Solve{
+		ID: solveID, SessionID: &sessionID, DurationMS: 22_222, Penalty: "plus_two",
+		SolvedAt: startedAt.Add(time.Second), Scramble: "R U R' U'", Event: "3x3",
+	})
+	secondBatch, err := service.Sync(ctx, userID, syncservice.Request{
+		Cursor: firstBatchCursor, Device: deviceA,
+		Mutations: []syncservice.Mutation{
+			{ID: uuid.New(), Entity: "solve", EntityID: solveID, Operation: "upsert", BaseVersion: 1, Data: updatedSolve},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("device A second batch failed: %v", err)
+	}
+	secondBatchCursor := secondBatch.NextCursor
+	if secondBatchCursor <= firstBatchCursor {
+		t.Fatalf("expected the second batch cursor (%d) to advance past the first batch (%d)", secondBatchCursor, firstBatchCursor)
+	}
+	if _, err := service.Sync(ctx, userID, syncservice.Request{Cursor: secondBatchCursor, Device: deviceA}, 1); err != nil {
+		t.Fatalf("device A ack of second batch failed: %v", err)
+	}
+
+	// Run retention's prune inline. RetentionService.runOnce isn't exported
+	// and normally only runs on its own ticker, so this issues the exact
+	// queries it runs (MinValidCursorForUser then PruneChangeLog, both in
+	// db/queries/sync.sql) with the same window, reproducing precisely what
+	// the background job would do for this user.
+	var minCursor int64
+	if err := pool.QueryRow(ctx,
+		"SELECT COALESCE(MIN(last_ack_cursor), 0)::bigint FROM devices WHERE user_id = $1 AND last_seen_at > $2",
+		userID, time.Now().UTC().Add(-window),
+	).Scan(&minCursor); err != nil {
+		t.Fatal(err)
+	}
+	if minCursor != secondBatchCursor {
+		t.Fatalf("expected retention's prune floor to be device A's caught-up cursor (%d, the only device still counted as active), got %d", secondBatchCursor, minCursor)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM change_log WHERE user_id = $1 AND change_id < $2", userID, minCursor); err != nil {
+		t.Fatal(err)
+	}
+
+	// Device B reconnects with its old, now-pruned cursor. It must be told
+	// to resync (409 cursor_expired at the HTTP layer - see
+	// httpapi.synchronize) rather than silently receiving zero changes and
+	// believing it is fully caught up.
+	_, err = service.Sync(ctx, userID, syncservice.Request{Cursor: firstBatchCursor, Device: deviceB}, 1)
+	var clientErr syncservice.ClientError
+	if !errors.As(err, &clientErr) || clientErr.Code != "cursor_expired" {
+		t.Fatalf("expected cursor_expired for device B's pruned cursor, got %v", err)
+	}
+}
+
+func mustMarshal(v interface{}) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

@@ -2,8 +2,10 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +46,7 @@ func (s *StatsService) ComputeStats(ctx context.Context, userID uuid.UUID, req S
 		MeanMS:       row.MeanMs,
 		StddevMS:     row.StddevMs,
 		TotalMS:      row.TotalMs,
+		DNFAverages:  []string{},
 	}
 
 	// Compute AoN values using the most recent N solve times.
@@ -51,100 +54,81 @@ func (s *StatsService) ComputeStats(ctx context.Context, userID uuid.UUID, req S
 		if row.CountedCount+row.DnfCount < int64(n) {
 			break
 		}
-		ao, err := s.computeAoN(ctx, q, userID, req.Event, n)
+		ao, isDNF, err := s.computeAoN(ctx, q, userID, req.Event, n)
 		if err != nil {
 			return StatsResponse{}, err
 		}
-		switch n {
-		case 5:
-			resp.Ao5 = ao
-		case 12:
-			resp.Ao12 = ao
-		case 50:
-			resp.Ao50 = ao
-		case 100:
-			resp.Ao100 = ao
+		nStr := fmt.Sprintf("ao%d", n)
+		if isDNF {
+			resp.DNFAverages = append(resp.DNFAverages, nStr)
+		} else {
+			switch n {
+			case 5:
+				resp.Ao5 = ao
+			case 12:
+				resp.Ao12 = ao
+			case 50:
+				resp.Ao50 = ao
+			case 100:
+				resp.Ao100 = ao
+			}
 		}
 	}
 
 	return resp, nil
 }
 
-// computeAoN computes the Average of N (AoN) for the most recent N solves.
-// Returns nil if there are fewer than n solves, or if more than 1/5 of solves are DNF.
+// computeAoN computes the average of the most recent n solves. isDNF reports a
+// DNF average; a nil value without isDNF means there are not enough solves.
 func (s *StatsService) computeAoN(
 	ctx context.Context, q *storedb.Queries,
 	userID uuid.UUID, event string, n int,
-) (*int64, error) {
+) (*int64, bool, error) {
 	rows, err := q.UserSolveAoN(ctx, storedb.UserSolveAoNParams{
 		UserID:   userID,
 		Event:    event,
 		LimitVal: int32(n),
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if len(rows) < n {
-		return nil, nil
-	}
-
-	// Standard AoN: drop best and worst (for n>=5), discard if >1/5 are DNF.
-	dnfCount := 0
-	times := make([]int64, 0, n)
+	times := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		if row.Penalty == "dnf" {
-			dnfCount++
-			times = append(times, math.MaxInt64) // DNF sorts to worst
-		} else {
-			// EffectiveMs is interface{} from sqlc CASE expression — convert via pgx numeric types.
-			ms, ok := toInt64(row.EffectiveMs)
-			if !ok {
-				return nil, nil
-			}
-			times = append(times, ms)
+			times = append(times, math.MaxInt64)
+			continue
 		}
-	}
-
-	// More than 1/5 DNF → AoN is DNF.
-	maxDNF := n / 5
-	if n == 5 {
-		maxDNF = 1
-	}
-	if dnfCount > maxDNF {
-		return nil, nil
-	}
-
-	// Sort ascending (insertion sort — n is small).
-	sortedTimes := make([]int64, n)
-	copy(sortedTimes, times)
-	for i := 1; i < n; i++ {
-		key := sortedTimes[i]
-		j := i - 1
-		for j >= 0 && sortedTimes[j] > key {
-			sortedTimes[j+1] = sortedTimes[j]
-			j--
+		ms, ok := toInt64(row.EffectiveMs)
+		if !ok {
+			return nil, false, fmt.Errorf("unexpected effective_ms type %T", row.EffectiveMs)
 		}
-		sortedTimes[j+1] = key
+		times = append(times, ms)
 	}
+	avg, isDNF := computeAoNFromTimes(times, n)
+	return avg, isDNF, nil
+}
 
-	// Drop best and worst for n >= 5.
-	trimFrom, trimTo := 0, n
-	if n >= 5 {
-		trimFrom = 1
-		trimTo = n - 1
+// computeAoNFromTimes applies the WCA/csTimer rule: drop ceil(5%) of the n
+// times from each end; any DNF (math.MaxInt64) left after trimming makes the
+// average DNF. The mean is rounded to the nearest millisecond.
+func computeAoNFromTimes(times []int64, n int) (*int64, bool) {
+	if n <= 0 || len(times) < n {
+		return nil, false
 	}
-	trimmed := sortedTimes[trimFrom:trimTo]
-
+	sorted := slices.Clone(times[:n])
+	slices.Sort(sorted)
+	k := (n + 19) / 20
+	trimmed := sorted[k : n-k]
+	if trimmed[len(trimmed)-1] == math.MaxInt64 {
+		return nil, true
+	}
 	var sum int64
 	for _, t := range trimmed {
-		if t == math.MaxInt64 {
-			return nil, nil
-		}
 		sum += t
 	}
-
-	avg := sum / int64(len(trimmed))
-	return &avg, nil
+	count := int64(len(trimmed))
+	mean := (sum + count/2) / count
+	return &mean, false
 }
 
 // toInt64 converts an interface{} value from a sqlc CASE expression to int64.
@@ -227,7 +211,7 @@ func (s *RetentionService) runOnce() {
 		return
 	}
 
-	cutoff := time.Now().UTC().Add(-s.inactiveDeviceWindow)
+	cutoff := time.Now().UTC().Add(-effectiveInactiveWindow(s.inactiveDeviceWindow))
 	for _, userID := range userIDs {
 		minCursor, err := q.MinValidCursorForUser(ctx, storedb.MinValidCursorForUserParams{
 			UserID:     userID,

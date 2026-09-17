@@ -290,6 +290,8 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /v1/sync:
     post:
       operationId: synchronize
@@ -392,6 +394,22 @@ paths:
             type: string
             format: date-time
           description: Cursor for pagination - returns errors before this timestamp
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Cursor ID for pagination - used with before for keyset pagination
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of errors to return (1-100, default 50)
       responses:
         "200":
           description: List of recorded application errors
@@ -564,7 +582,7 @@ components:
       properties:
         current_password:
           type: string
-          description: Required if the user already has a password set.
+          description: Current password. Accounts without one receive 409 password_not_set and must use the password reset flow.
         new_password:
           type: string
           minLength: 8
@@ -767,6 +785,10 @@ components:
         next_cursor:
           type: string
           format: date-time
+          nullable: true
+        next_cursor_id:
+          type: integer
+          format: int64
           nullable: true
     AuthSession:
       type: object
@@ -1092,7 +1114,7 @@ components:
           format: uuid
     StatsResponse:
       type: object
-      required: [total_count, counted_count, dnf_count, min_ms, max_ms, mean_ms, stddev_ms, total_ms]
+      required: [total_count, counted_count, dnf_count, min_ms, max_ms, mean_ms, stddev_ms, total_ms, dnf_averages]
       properties:
         total_count:
           type: integer
@@ -1130,6 +1152,11 @@ components:
         ao100:
           type: integer
           format: int64
+        dnf_averages:
+          type: array
+          items:
+            type: string
+          description: List of averages that are DNF (e.g., ["ao12"])
     DeleteStub:
       type: object
       required: [id, version, deleted_at]
