@@ -888,6 +888,8 @@ components:
           maxLength: 4096
         event:
           $ref: "#/components/schemas/Event"
+        timing_device:
+          $ref: "#/components/schemas/TimingDevice"
     Session:
       type: object
       required: [id, name, event, kind, started_at, archived, version, updated_at]
@@ -923,7 +925,7 @@ components:
           format: date-time
     Solve:
       type: object
-      required: [id, duration_ms, penalty, solved_at, scramble, event, version, updated_at]
+      required: [id, duration_ms, penalty, solved_at, scramble, event, timing_device, version, updated_at]
       properties:
         id:
           type: string
@@ -947,6 +949,8 @@ components:
           maxLength: 4096
         event:
           $ref: "#/components/schemas/Event"
+        timing_device:
+          $ref: "#/components/schemas/TimingDevice"
         version:
           type: integer
           format: int64
@@ -960,6 +964,9 @@ components:
     Event:
       type: string
       enum: [2x2, 3x3, 4x4, 5x5, megaminx, pyraminx]
+    TimingDevice:
+      type: string
+      enum: [keyboard, external_timer, smart_cube]
     Mutation:
       type: object
       required: [id, entity, entity_id, operation, base_version]

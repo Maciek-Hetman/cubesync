@@ -56,8 +56,8 @@ FOR UPDATE;
 
 -- name: InsertSolve :one
 INSERT INTO solves (
-    id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, timing_device
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: UpdateSolve :one
@@ -68,10 +68,11 @@ SET session_id = $3,
     solved_at = $6,
     scramble = $7,
     event = $8,
+    timing_device = $9,
     version = version + 1,
     updated_at = now(),
     deleted_at = NULL
-WHERE user_id = $1 AND id = $2 AND version = $9
+WHERE user_id = $1 AND id = $2 AND version = $10
 RETURNING *;
 
 -- name: DeleteSolve :one

@@ -425,6 +425,9 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 	if message := validateSolve(input, m.EntityID); message != "" {
 		return rejected(m.ID, "invalid_solve", message), nil
 	}
+	if input.TimingDevice == "" {
+		input.TimingDevice = "keyboard"
+	}
 	sessionID := uuid.NullUUID{}
 	if input.SessionID != nil {
 		sessionID = uuid.NullUUID{UUID: *input.SessionID, Valid: true}
@@ -439,6 +442,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		result, err = q.InsertSolve(ctx, storedb.InsertSolveParams{
 			ID: input.ID, UserID: userID, SessionID: sessionID, DurationMs: input.DurationMS,
 			Penalty: input.Penalty, SolvedAt: input.SolvedAt, Scramble: input.Scramble, Event: input.Event,
+			TimingDevice: input.TimingDevice,
 		})
 	} else {
 		if current.Version != m.BaseVersion {
@@ -447,7 +451,7 @@ func (s *Service) applySolve(ctx context.Context, q *storedb.Queries, userID uui
 		result, err = q.UpdateSolve(ctx, storedb.UpdateSolveParams{
 			UserID: userID, ID: input.ID, SessionID: sessionID, DurationMs: input.DurationMS,
 			Penalty: input.Penalty, SolvedAt: input.SolvedAt, Scramble: input.Scramble,
-			Event: input.Event, Version: m.BaseVersion,
+			Event: input.Event, TimingDevice: input.TimingDevice, Version: m.BaseVersion,
 		})
 	}
 	if err != nil {
@@ -523,6 +527,13 @@ func validateSolve(value Solve, expectedID uuid.UUID) string {
 	if !validEvent(value.Event) {
 		return "event is not supported"
 	}
+	device := value.TimingDevice
+	if device == "" {
+		device = "keyboard"
+	}
+	if device != "keyboard" && device != "external_timer" && device != "smart_cube" {
+		return "timing_device must be keyboard, external_timer, or smart_cube"
+	}
 	return ""
 }
 
@@ -575,7 +586,8 @@ func solveFromDB(row storedb.Solf) Solve {
 	}
 	return Solve{
 		ID: row.ID, SessionID: sessionID, DurationMS: row.DurationMs, Penalty: row.Penalty,
-		SolvedAt: row.SolvedAt, Scramble: row.Scramble, Event: row.Event, Version: row.Version,
+		SolvedAt: row.SolvedAt, Scramble: row.Scramble, Event: row.Event,
+		TimingDevice: row.TimingDevice, Version: row.Version,
 		UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }

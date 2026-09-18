@@ -43,16 +43,17 @@ type Session struct {
 }
 
 type Solve struct {
-	ID         uuid.UUID  `json:"id"`
-	SessionID  *uuid.UUID `json:"session_id,omitempty"`
-	DurationMS int64      `json:"duration_ms"`
-	Penalty    string     `json:"penalty"`
-	SolvedAt   time.Time  `json:"solved_at"`
-	Scramble   string     `json:"scramble"`
-	Event      string     `json:"event"`
-	Version    int64      `json:"version"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+	ID           uuid.UUID  `json:"id"`
+	SessionID    *uuid.UUID `json:"session_id,omitempty"`
+	DurationMS   int64      `json:"duration_ms"`
+	Penalty      string     `json:"penalty"`
+	SolvedAt     time.Time  `json:"solved_at"`
+	Scramble     string     `json:"scramble"`
+	Event        string     `json:"event"`
+	TimingDevice string     `json:"timing_device,omitempty"`
+	Version      int64      `json:"version"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 }
 
 type MutationOutcome struct {

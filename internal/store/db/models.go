@@ -112,17 +112,18 @@ type RequestStatsHourly struct {
 }
 
 type Solf struct {
-	ID         uuid.UUID     `json:"id"`
-	UserID     uuid.UUID     `json:"user_id"`
-	SessionID  uuid.NullUUID `json:"session_id"`
-	DurationMs int64         `json:"duration_ms"`
-	Penalty    string        `json:"penalty"`
-	SolvedAt   time.Time     `json:"solved_at"`
-	Scramble   string        `json:"scramble"`
-	Event      string        `json:"event"`
-	Version    int64         `json:"version"`
-	UpdatedAt  time.Time     `json:"updated_at"`
-	DeletedAt  *time.Time    `json:"deleted_at"`
+	ID           uuid.UUID     `json:"id"`
+	UserID       uuid.UUID     `json:"user_id"`
+	SessionID    uuid.NullUUID `json:"session_id"`
+	DurationMs   int64         `json:"duration_ms"`
+	Penalty      string        `json:"penalty"`
+	SolvedAt     time.Time     `json:"solved_at"`
+	Scramble     string        `json:"scramble"`
+	Event        string        `json:"event"`
+	Version      int64         `json:"version"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	DeletedAt    *time.Time    `json:"deleted_at"`
+	TimingDevice string        `json:"timing_device"`
 }
 
 type User struct {

@@ -89,7 +89,7 @@ func (q *Queries) ListSessionsPaginated(ctx context.Context, arg ListSessionsPag
 }
 
 const listSolvesForSessionPaginated = `-- name: ListSolvesForSessionPaginated :many
-SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 FROM solves
 WHERE user_id = $1
     AND session_id = $2
@@ -135,6 +135,7 @@ func (q *Queries) ListSolvesForSessionPaginated(ctx context.Context, arg ListSol
 			&i.Version,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.TimingDevice,
 		); err != nil {
 			return nil, err
 		}

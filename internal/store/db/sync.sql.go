@@ -88,7 +88,7 @@ const deleteSolve = `-- name: DeleteSolve :one
 UPDATE solves
 SET version = version + 1, updated_at = now(), deleted_at = now()
 WHERE user_id = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL
-RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 `
 
 type DeleteSolveParams struct {
@@ -112,6 +112,7 @@ func (q *Queries) DeleteSolve(ctx context.Context, arg DeleteSolveParams) (Solf,
 		&i.Version,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TimingDevice,
 	)
 	return i, err
 }
@@ -165,7 +166,7 @@ func (q *Queries) GetSessionForUpdate(ctx context.Context, arg GetSessionForUpda
 }
 
 const getSolveForUpdate = `-- name: GetSolveForUpdate :one
-SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at FROM solves
+SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device FROM solves
 WHERE user_id = $1 AND id = $2
 FOR UPDATE
 `
@@ -190,6 +191,7 @@ func (q *Queries) GetSolveForUpdate(ctx context.Context, arg GetSolveForUpdatePa
 		&i.Version,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TimingDevice,
 	)
 	return i, err
 }
@@ -242,20 +244,21 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (C
 
 const insertSolve = `-- name: InsertSolve :one
 INSERT INTO solves (
-    id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+    id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, timing_device
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 `
 
 type InsertSolveParams struct {
-	ID         uuid.UUID     `json:"id"`
-	UserID     uuid.UUID     `json:"user_id"`
-	SessionID  uuid.NullUUID `json:"session_id"`
-	DurationMs int64         `json:"duration_ms"`
-	Penalty    string        `json:"penalty"`
-	SolvedAt   time.Time     `json:"solved_at"`
-	Scramble   string        `json:"scramble"`
-	Event      string        `json:"event"`
+	ID           uuid.UUID     `json:"id"`
+	UserID       uuid.UUID     `json:"user_id"`
+	SessionID    uuid.NullUUID `json:"session_id"`
+	DurationMs   int64         `json:"duration_ms"`
+	Penalty      string        `json:"penalty"`
+	SolvedAt     time.Time     `json:"solved_at"`
+	Scramble     string        `json:"scramble"`
+	Event        string        `json:"event"`
+	TimingDevice string        `json:"timing_device"`
 }
 
 func (q *Queries) InsertSolve(ctx context.Context, arg InsertSolveParams) (Solf, error) {
@@ -268,6 +271,7 @@ func (q *Queries) InsertSolve(ctx context.Context, arg InsertSolveParams) (Solf,
 		arg.SolvedAt,
 		arg.Scramble,
 		arg.Event,
+		arg.TimingDevice,
 	)
 	var i Solf
 	err := row.Scan(
@@ -282,6 +286,7 @@ func (q *Queries) InsertSolve(ctx context.Context, arg InsertSolveParams) (Solf,
 		&i.Version,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TimingDevice,
 	)
 	return i, err
 }
@@ -522,23 +527,25 @@ SET session_id = $3,
     solved_at = $6,
     scramble = $7,
     event = $8,
+    timing_device = $9,
     version = version + 1,
     updated_at = now(),
     deleted_at = NULL
-WHERE user_id = $1 AND id = $2 AND version = $9
-RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+WHERE user_id = $1 AND id = $2 AND version = $10
+RETURNING id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 `
 
 type UpdateSolveParams struct {
-	UserID     uuid.UUID     `json:"user_id"`
-	ID         uuid.UUID     `json:"id"`
-	SessionID  uuid.NullUUID `json:"session_id"`
-	DurationMs int64         `json:"duration_ms"`
-	Penalty    string        `json:"penalty"`
-	SolvedAt   time.Time     `json:"solved_at"`
-	Scramble   string        `json:"scramble"`
-	Event      string        `json:"event"`
-	Version    int64         `json:"version"`
+	UserID       uuid.UUID     `json:"user_id"`
+	ID           uuid.UUID     `json:"id"`
+	SessionID    uuid.NullUUID `json:"session_id"`
+	DurationMs   int64         `json:"duration_ms"`
+	Penalty      string        `json:"penalty"`
+	SolvedAt     time.Time     `json:"solved_at"`
+	Scramble     string        `json:"scramble"`
+	Event        string        `json:"event"`
+	TimingDevice string        `json:"timing_device"`
+	Version      int64         `json:"version"`
 }
 
 func (q *Queries) UpdateSolve(ctx context.Context, arg UpdateSolveParams) (Solf, error) {
@@ -551,6 +558,7 @@ func (q *Queries) UpdateSolve(ctx context.Context, arg UpdateSolveParams) (Solf,
 		arg.SolvedAt,
 		arg.Scramble,
 		arg.Event,
+		arg.TimingDevice,
 		arg.Version,
 	)
 	var i Solf
@@ -566,6 +574,7 @@ func (q *Queries) UpdateSolve(ctx context.Context, arg UpdateSolveParams) (Solf,
 		&i.Version,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.TimingDevice,
 	)
 	return i, err
 }

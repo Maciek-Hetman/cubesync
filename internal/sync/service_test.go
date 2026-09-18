@@ -49,15 +49,32 @@ func TestSolveValidation(t *testing.T) {
 	id := uuid.New()
 	valid := Solve{
 		ID: id, DurationMS: 12_345, Penalty: "none", SolvedAt: time.Now().UTC(),
-		Scramble: "R U R' U'", Event: "3x3",
+		Scramble: "R U R' U'", Event: "3x3", TimingDevice: "keyboard",
 	}
 	if message := validateSolve(valid, id); message != "" {
 		t.Fatalf("valid solve rejected: %s", message)
+	}
+	emptyDevice := valid
+	emptyDevice.TimingDevice = ""
+	if message := validateSolve(emptyDevice, id); message != "" {
+		t.Fatalf("empty timing_device should default to keyboard: %s", message)
+	}
+	for _, device := range []string{"external_timer", "smart_cube"} {
+		ok := valid
+		ok.TimingDevice = device
+		if message := validateSolve(ok, id); message != "" {
+			t.Fatalf("valid timing_device %q rejected: %s", device, message)
+		}
 	}
 	invalid := valid
 	invalid.Penalty = "+2"
 	if message := validateSolve(invalid, id); message == "" {
 		t.Fatal("invalid penalty accepted")
+	}
+	invalidDevice := valid
+	invalidDevice.TimingDevice = "stackmat"
+	if message := validateSolve(invalidDevice, id); message == "" {
+		t.Fatal("invalid timing_device accepted")
 	}
 }
 

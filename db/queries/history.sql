@@ -14,7 +14,7 @@ ORDER BY cs.started_at DESC, cs.id DESC
 LIMIT sqlc.arg(limit_val);
 
 -- name: ListSolvesForSessionPaginated :many
-SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 FROM solves
 WHERE user_id = $1
     AND session_id = $2

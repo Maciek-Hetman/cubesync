@@ -86,6 +86,7 @@ func (r *fakeSolveRow) Scan(dest ...interface{}) error {
 	*dest[8].(*int64) = r.row.Version
 	*dest[9].(*time.Time) = r.row.UpdatedAt
 	*dest[10].(**time.Time) = r.row.DeletedAt
+	*dest[11].(*string) = r.row.TimingDevice
 	return nil
 }
 
@@ -126,7 +127,7 @@ func TestApplySolveDeleteOfTombstoneIsIdempotent(t *testing.T) {
 	mock := &tombstoneMockDBTX{solveRow: &storedb.Solf{
 		ID: solveID, UserID: userID, DurationMs: 1000, Penalty: "none",
 		SolvedAt: deletedAt.Add(-time.Hour), Scramble: "R U R' U'", Event: "3x3",
-		Version: 2, UpdatedAt: deletedAt, DeletedAt: &deletedAt,
+		Version: 2, UpdatedAt: deletedAt, DeletedAt: &deletedAt, TimingDevice: "keyboard",
 	}}
 	q := storedb.New(mock)
 

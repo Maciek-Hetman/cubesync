@@ -6,7 +6,7 @@ ORDER BY id
 LIMIT $3;
 
 -- name: SnapshotSolvesKeyset :many
-SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at
+SELECT id, user_id, session_id, duration_ms, penalty, solved_at, scramble, event, version, updated_at, deleted_at, timing_device
 FROM solves
 WHERE user_id = $1 AND id > $2
 ORDER BY id
