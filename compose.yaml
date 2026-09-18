@@ -7,11 +7,13 @@ services:
       - "${HTTPS_PORT:-443}:443"
       - "${HTTPS_PORT:-443}:443/udp"
     environment:
-      DOMAIN: ${DOMAIN:-sync.example.com}
+      DOMAIN: ${DOMAIN:-api.example.com}
+      WEB_DOMAIN: ${WEB_DOMAIN:-example.com}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      - ${WEB_ROOT:-/var/www/cubetimer}:/srv/web:ro
     depends_on:
       api:
         condition: service_healthy

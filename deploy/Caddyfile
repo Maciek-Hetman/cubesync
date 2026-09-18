@@ -1,13 +1,8 @@
-{$DOMAIN:sync.example.com} {
+{$WEB_DOMAIN:example.com} {
+	root * /srv/web
 	encode zstd gzip
-
-	reverse_proxy api:43781 {
-		header_up Host {host}
-		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-	}
-
+	try_files {path} /index.html
+	file_server
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
@@ -17,3 +12,23 @@
 	}
 }
 
+www.{$WEB_DOMAIN:example.com} {
+	redir https://{$WEB_DOMAIN:example.com}{uri} permanent
+}
+
+{$DOMAIN:api.example.com} {
+	encode zstd gzip
+	reverse_proxy api:43781 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

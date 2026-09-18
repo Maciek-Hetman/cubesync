@@ -13,6 +13,8 @@ The entire production stack—PostgreSQL 18, the CubeSync Go API daemon, databas
                               |  [ Docker Bridge Network ]                      |
                               |  +-------------------------------------------+  |
                               |  | caddy:2-alpine (Auto Let's Encrypt / TLS) |  |
+                              |  |  WEB_DOMAIN → /srv/web (static SPA)       |  |
+                              |  |  DOMAIN → reverse_proxy api:43781         |  |
                               |  +-------------------------------------------+  |
                               |                      |                          |
                               |                      v HTTP (Internal Bridge)   |
@@ -43,11 +45,15 @@ For a small to medium self-hosted instance (up to several thousand active users)
 ## Step 1: DNS and Host Firewall Hardening
 
 ### 1.1 DNS Records
-Create an `A` (and optional `AAAA`) record pointing your sync domain to the public IP address of your VPS:
+Create `A` (and optional `AAAA`) records for the web apex and API subdomain:
 
 ```text
-sync.example.com.   IN  A     203.0.113.10
-sync.example.com.   IN  AAAA  2001:db8::10
+cubetimer.cc.       IN  A     203.0.113.10
+www.cubetimer.cc.   IN  A     203.0.113.10
+api.cubetimer.cc.   IN  A     203.0.113.10
+cubetimer.cc.       IN  AAAA  2001:db8::10
+www.cubetimer.cc.   IN  AAAA  2001:db8::10
+api.cubetimer.cc.   IN  AAAA  2001:db8::10
 ```
 
 > [!IMPORTANT]
@@ -81,12 +87,12 @@ Verify that port `5432` (PostgreSQL) and port `43781` (CubeSync API) are **never
 ## Step 2: Host Directory and Environment Setup
 
 ### 2.1 Directory Layout
-Create a dedicated deployment directory for CubeSync and its configuration files:
+Create a dedicated deployment directory for CubeSync (and optionally the CubeTimer web static root):
 
 ```bash
-sudo mkdir -p /opt/cubesync/deploy
-sudo chown -R "$USER":"$USER" /opt/cubesync
-cd /opt/cubesync
+sudo mkdir -p /opt/cubetimer/deploy /var/www/cubetimer
+sudo chown -R "$USER":"$USER" /opt/cubetimer /var/www/cubetimer
+cd /opt/cubetimer
 ```
 
 ### 2.2 Download Deployment Files
@@ -94,23 +100,34 @@ Download `compose.yaml` and `deploy/Caddyfile`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Maciek-Hetman/cubesync/main/compose.yaml -o compose.yaml
+mkdir -p deploy
 curl -fsSL https://raw.githubusercontent.com/Maciek-Hetman/cubesync/main/deploy/Caddyfile -o deploy/Caddyfile
 ```
 
+The bundled Caddyfile serves:
+
+- `{$WEB_DOMAIN}` — CubeTimer-web static files from `/srv/web` (host `${WEB_ROOT:-/var/www/cubetimer}`)
+- `www.{$WEB_DOMAIN}` — permanent redirect to the apex
+- `{$DOMAIN}` — reverse proxy to the CubeSync API
+
 ### 2.3 Configure Production Environment (`.env`)
-Create `/opt/cubesync/.env` with production-grade settings:
+Create `/opt/cubetimer/.env` with production-grade settings:
 
 ```bash
-cat << 'EOF' > /opt/cubesync/.env
+cat << 'EOF' > /opt/cubetimer/.env
 # --- Application Environment ---
 APP_ENV=production
-CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.1.0
+CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.3.0
 
 # --- Domain & Reverse Proxy ---
-DOMAIN=sync.example.com
-PUBLIC_URL=https://sync.example.com
-CLIENT_URL=cubetimer://auth
-ALLOWED_ORIGINS=https://timer.example.com
+# API hostname (Caddy site + PUBLIC_URL)
+DOMAIN=api.cubetimer.cc
+WEB_DOMAIN=cubetimer.cc
+WEB_ROOT=/var/www/cubetimer
+PUBLIC_URL=https://api.cubetimer.cc
+# Web app origin used in verification/reset emails
+CLIENT_URL=https://cubetimer.cc
+ALLOWED_ORIGINS=https://cubetimer.cc
 
 # --- Internal Networking ---
 API_BIND=127.0.0.1
@@ -127,12 +144,12 @@ JWT_SECRET=replace-with-openssl-rand-base64-48-output
 ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_TTL=720h
 
-# --- SMTP Email Configuration ---
-SMTP_HOST=smtp.mailgun.org
+# --- SMTP Email Configuration (e.g. Resend on mail.cubetimer.cc) ---
+SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
-SMTP_USERNAME=postmaster@sync.example.com
+SMTP_USERNAME=resend
 SMTP_PASSWORD=your-smtp-password
-SMTP_FROM=CubeTimer <noreply@sync.example.com>
+SMTP_FROM=CubeTimer <noreply@mail.cubetimer.cc>
 SMTP_STARTTLS=true
 # MANDATORY: Must be false in production to prevent secret leakage in logs
 LOG_ONE_TIME_LINKS=false
@@ -159,7 +176,7 @@ EOF
 Restrict read and write access on `.env` to the operating system deployment user:
 
 ```bash
-chmod 600 /opt/cubesync/.env
+chmod 600 /opt/cubetimer/.env
 ```
 
 ---
@@ -170,15 +187,16 @@ chmod 600 /opt/cubesync/.env
 Authenticate with GitHub Container Registry (if using private package builds) and pull the pinned images:
 
 ```bash
-cd /opt/cubesync
+cd /opt/cubetimer
 docker compose pull
+docker compose up -d --no-build
 ```
 
 ### 3.2 Launch the Complete Stack
-Start PostgreSQL, the migration runner, the API daemon, and the Caddy reverse proxy:
+If you only ran `pull` above, start PostgreSQL, the migration runner, the API daemon, and Caddy. Prefer `--no-build` on the VPS when using a published GHCR image (no local Dockerfile required):
 
 ```bash
-docker compose up -d
+docker compose up -d --no-build
 ```
 
 ### 3.3 Verify Container Status & Migration Logs
@@ -200,7 +218,7 @@ Caddy automatically contacts Let's Encrypt / ZeroSSL, solves the ACME HTTP-01/TL
 Test the public health endpoint:
 
 ```bash
-curl -i https://sync.example.com/health/ready
+curl -i https://api.cubetimer.cc/health/ready
 ```
 
 Expected HTTP status: `HTTP/2 200` with body:
@@ -239,15 +257,15 @@ The newly created admin can immediately authenticate via `POST /v1/auth/login`.
 ## Step 5: Automated Backups & Disaster Recovery
 
 ### 5.1 Automated Backup Script
-Create an automated backup script at `/opt/cubesync/backup.sh`:
+Create an automated backup script at `/opt/cubetimer/backup.sh`:
 
 ```bash
-cat << 'EOF' > /opt/cubesync/backup.sh
+cat << 'EOF' > /opt/cubetimer/backup.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 BACKUP_DIR="/var/backups/cubesync"
-COMPOSE_DIR="/opt/cubesync"
+COMPOSE_DIR="/opt/cubetimer"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_FILE="${BACKUP_DIR}/cubesync-${TIMESTAMP}.dump"
 RETENTION_DAYS=14
@@ -267,7 +285,7 @@ find "${BACKUP_DIR}" -type f -name "cubesync-*.dump" -mtime +"${RETENTION_DAYS}"
 echo "[$(date -u)] Backup completed successfully: ${BACKUP_FILE}"
 EOF
 
-chmod 700 /opt/cubesync/backup.sh
+chmod 700 /opt/cubetimer/backup.sh
 ```
 
 ### 5.2 Configure Automated Systemd Timer
@@ -281,7 +299,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/cubesync/backup.sh
+ExecStart=/opt/cubetimer/backup.sh
 StandardOutput=journal
 StandardError=journal
 ```
@@ -319,7 +337,7 @@ Sync `/var/backups/cubesync` offsite using `rclone`, AWS S3, or `rsync` over SSH
 Test backup restoration non-destructively into a temporary database:
 
 ```bash
-cd /opt/cubesync
+cd /opt/cubetimer
 
 # 1. Create a temporary database
 docker compose exec -T postgres createdb -U cubetimer cubetimer_test_restore
@@ -355,22 +373,22 @@ To upgrade to a new version of CubeSync:
 
 1. Create an on-demand database backup:
    ```bash
-   /opt/cubesync/backup.sh
+   /opt/cubetimer/backup.sh
    ```
-2. Update the image tag in `/opt/cubesync/.env`:
+2. Update the image tag in `/opt/cubetimer/.env`:
    ```bash
    CUBESYNC_IMAGE=ghcr.io/maciek-hetman/cubesync:0.2.0
    ```
 3. Pull new images and apply the update:
    ```bash
-   cd /opt/cubesync
+   cd /opt/cubetimer
    docker compose pull
-   docker compose up -d
+   docker compose up -d --no-build
    ```
 4. Verify migration completion and service health:
    ```bash
    docker compose logs --since=5m migrate api caddy
-   curl -f https://sync.example.com/health/ready
+   curl -f https://api.cubetimer.cc/health/ready
    ```
 
 ### 6.2 Secret Rotation Runbooks
@@ -379,7 +397,7 @@ To upgrade to a new version of CubeSync:
 Changing `JWT_SECRET` immediately invalidates all existing short-lived access tokens (15-minute TTL). Because CubeSync stores refresh tokens as cryptographically hashed records in PostgreSQL, clients will automatically exchange their existing refresh tokens on the next request and receive a new access token signed with the new secret—**without logging users out**.
 
 1. Generate a new secret: `openssl rand -base64 48`.
-2. Update `JWT_SECRET` in `/opt/cubesync/.env`.
+2. Update `JWT_SECRET` in `/opt/cubetimer/.env`.
 3. Restart the API: `docker compose up -d api`.
 
 #### Rotating `POSTGRES_PASSWORD`
@@ -387,7 +405,7 @@ Changing `JWT_SECRET` immediately invalidates all existing short-lived access to
    ```bash
    docker compose exec -T postgres psql -U cubetimer -d cubetimer -c "ALTER USER cubetimer WITH PASSWORD 'new-strong-password';"
    ```
-2. Update `POSTGRES_PASSWORD` in `/opt/cubesync/.env`.
+2. Update `POSTGRES_PASSWORD` in `/opt/cubetimer/.env`.
 3. Recreate the containers:
    ```bash
    docker compose up -d

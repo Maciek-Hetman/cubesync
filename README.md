@@ -134,11 +134,13 @@ Accounts are never merged merely because Google reports the same email as an exi
 
 ## Production deployment
 
-See [`docs/deployment.md`](docs/deployment.md) for VPS setup, HTTPS, secrets, upgrades, and PostgreSQL backup/restore. The production stack runs PostgreSQL, the Go API, and Caddy (configured via [`deploy/Caddyfile`](deploy/Caddyfile)) entirely within Docker Compose.
+See [`docs/deployment.md`](docs/deployment.md) for VPS setup, HTTPS, secrets, upgrades, and PostgreSQL backup/restore. The production stack runs PostgreSQL, the Go API, and Caddy (configured via [`deploy/Caddyfile`](deploy/Caddyfile)) entirely within Docker Compose. Caddy can also serve CubeTimer-web static files for `WEB_DOMAIN` from `/var/www/cubetimer`.
+
+Tag releases (`v*`) publish to GHCR; [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) SSHs to the VPS, bumps `CUBESYNC_IMAGE`, and runs `docker compose up -d --no-build`.
 
 Minimum operational requirements:
 
-1. Set `APP_ENV=production` and `DOMAIN=sync.example.com`.
+1. Set `APP_ENV=production`, `DOMAIN=api.example.com`, and `WEB_DOMAIN=example.com`.
 2. Generate `JWT_SECRET` with `openssl rand -base64 48`.
 3. Set `LOG_ONE_TIME_LINKS=false` and configure SMTP.
 4. Bind the API to loopback with `API_BIND=127.0.0.1`.
